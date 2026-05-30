@@ -225,7 +225,7 @@ It covers:
 
 ## Roadmap
 
-Things I may add later:
+ Features I plan to add later:
 
 - direct testing against an existing chatbot API,
 - scheduled regression tests,
