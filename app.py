@@ -137,6 +137,40 @@ def apply_theme() -> None:
             color: var(--ars-subtle) !important;
             opacity: 1;
         }
+        [data-testid="stMultiSelect"] [data-baseweb="select"],
+        [data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+            background: #ffffff !important;
+            border-color: #cfd5df !important;
+            color: var(--ars-text) !important;
+        }
+        [data-testid="stMultiSelect"] input,
+        [data-testid="stMultiSelect"] [data-baseweb="input"],
+        [data-testid="stMultiSelect"] [data-baseweb="input"] *,
+        [data-testid="stMultiSelect"] [contenteditable="true"] {
+            background: transparent !important;
+            color: var(--ars-text) !important;
+            caret-color: var(--ars-text) !important;
+        }
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+            background: #eaf1ff !important;
+            border: 1px solid #bdd0f7 !important;
+            border-radius: 6px !important;
+            color: #17324d !important;
+            max-width: 100% !important;
+        }
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] *,
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] svg {
+            background: transparent !important;
+            color: #17324d !important;
+            fill: #17324d !important;
+            stroke: #17324d !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stMultiSelect"] svg {
+            color: var(--ars-text) !important;
+            fill: var(--ars-text) !important;
+        }
         button[kind="secondary"],
         button[data-testid="stBaseButton-secondary"],
         button[kind="minimal"],
