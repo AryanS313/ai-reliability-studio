@@ -64,7 +64,7 @@ The sample demo uses a fictional fintech company called FinSure, with sample pol
 ## Main features
 
 - Demo mode with sample FinSure fintech data
-- Custom upload mode for your own documents and evaluation CSV
+- Custom upload mode for common business-document formats and structured evaluation datasets
 - System prompt testing
 - Improved prompt comparison
 - RAG-style document retrieval using TF-IDF
@@ -78,7 +78,19 @@ The sample demo uses a fictional fintech company called FinSure, with sample pol
 - Failure analysis with suggested fixes
 - CSV export
 - Mock model mode when no API key is available
-- Optional OpenAI model calls when configured
+- Optional OpenAI, Google Gemini, or Anthropic Claude model calls when configured
+
+## Supported knowledge-base formats
+
+The Knowledge Base accepts:
+
+- text and markup: TXT, Markdown, LOG, YAML, XML, HTML, and RTF,
+- office documents: DOCX and PPTX,
+- tabular data: CSV, TSV, XLSX, and XLS,
+- structured data: JSON and JSONL,
+- searchable PDFs.
+
+Legacy binary `.doc` files should be saved as `.docx` before upload. Image-only or scanned PDFs require OCR and are not currently supported. The separate evaluation dataset supports CSV, TSV, XLSX, XLS, JSON, and JSONL with the required schema shown below.
 
 ## How the product works
 
@@ -88,7 +100,7 @@ The flow is:
 2. Add documents.
 3. Paste the current system prompt.
 4. Select a model.
-5. Upload an evaluation CSV.
+5. Upload an evaluation dataset.
 6. Run the evaluation.
 7. View the reliability dashboard.
 8. Compare the improved prompt.
@@ -105,13 +117,13 @@ It uses a deterministic mock model so anyone can open the app and understand the
 
 ### Real LLM mode
 
-Real LLM mode uses an OpenAI API key.
+Real LLM mode supports OpenAI, Google Gemini, and Anthropic Claude. Select a provider in `Settings / Export` and add that provider's API key.
 
 In this mode, the app sends the system prompt, retrieved document chunks, and test question to a real model, then evaluates the response.
 
 You can enable it in either of these ways:
 
-1. Paste an OpenAI API key in the `Settings / Export` page. The key is stored only in the current Streamlit session.
+1. Paste an OpenAI, Gemini, or Anthropic API key in the `Settings / Export` page. The key is stored only in the current Streamlit session.
 2. Add it through Streamlit secrets when deploying.
 
 Example Streamlit secrets:
@@ -120,13 +132,19 @@ Example Streamlit secrets:
 OPENAI_API_KEY = "sk-..."
 OPENAI_MODEL_A = "gpt-4o-mini"
 OPENAI_MODEL_B = "gpt-4.1-mini"
+GEMINI_API_KEY = "..."
+GEMINI_MODEL_A = "gemini-3.5-flash"
+GEMINI_MODEL_B = "gemini-3.5-flash-lite"
+ANTHROPIC_API_KEY = "..."
+ANTHROPIC_MODEL_A = "claude-sonnet-5"
+ANTHROPIC_MODEL_B = "claude-haiku-4-5"
 ```
 
 Do not commit API keys or local secrets to GitHub.
 
 ## Evaluation dataset format
 
-Upload a CSV with these columns:
+Upload a CSV, TSV, Excel, JSON, or JSONL dataset with these columns:
 
 ```csv
 question,expected_answer,expected_source,category,should_escalate

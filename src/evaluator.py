@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import BytesIO
+from pathlib import Path
 from typing import Callable
 
 import pandas as pd
@@ -15,6 +17,25 @@ from src.vector_store import SimpleVectorStore
 
 
 REQUIRED_COLUMNS = {"question", "expected_answer", "expected_source", "category", "should_escalate"}
+EVALUATION_UPLOAD_TYPES = ["csv", "tsv", "xlsx", "xls", "json", "jsonl"]
+
+
+def read_eval_dataset(filename: str, data: bytes) -> pd.DataFrame:
+    suffix = Path(filename).suffix.lower()
+    buffer = BytesIO(data)
+    if suffix == ".csv":
+        frame = pd.read_csv(buffer)
+    elif suffix == ".tsv":
+        frame = pd.read_csv(buffer, sep="\t")
+    elif suffix in {".xlsx", ".xls"}:
+        frame = pd.read_excel(buffer)
+    elif suffix == ".json":
+        frame = pd.read_json(buffer)
+    elif suffix == ".jsonl":
+        frame = pd.read_json(buffer, lines=True)
+    else:
+        raise ValueError(f"Unsupported evaluation dataset type: {suffix or 'no extension'}")
+    return normalize_eval_dataset(frame)
 
 
 def validate_eval_dataset(df: pd.DataFrame) -> None:
