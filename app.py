@@ -8,7 +8,8 @@ import streamlit as st
 
 from src import charts, config, database
 from src.chunker import chunk_documents
-from src.evaluator import normalize_eval_dataset, run_evaluation, validate_eval_dataset
+from src.document_loader import UPLOAD_TYPES, load_uploaded_document
+from src.evaluator import EVALUATION_UPLOAD_TYPES, normalize_eval_dataset, read_eval_dataset, run_evaluation
 from src.sample_data import (
     default_prompts,
     load_sample_documents,
@@ -20,6 +21,9 @@ from src.vector_store import SimpleVectorStore
 
 
 st.set_page_config(page_title="AI Reliability Studio", page_icon="ARS", layout="wide")
+
+PROVIDER_LABELS = {"OpenAI": "openai", "Google Gemini": "gemini", "Anthropic Claude": "anthropic"}
+PROVIDER_SECRET_NAMES = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
 def apply_theme() -> None:
@@ -358,6 +362,11 @@ def init_state() -> None:
     prompts = default_prompts()
     st.session_state.setdefault("mode", "Demo Mode")
     st.session_state.setdefault("openai_api_key", "")
+    st.session_state.setdefault("api_provider", "OpenAI")
+    st.session_state.setdefault(
+        "provider_api_keys",
+        {"openai": st.session_state.get("openai_api_key", ""), "gemini": "", "anthropic": ""},
+    )
     st.session_state.setdefault("project_id", None)
     st.session_state.setdefault("project", sample_project_metadata())
     st.session_state.setdefault("documents", [])
@@ -389,19 +398,21 @@ def load_demo() -> None:
 
 
 def effective_api_key() -> str:
+    provider = selected_provider()
     return (
-        (st.session_state.get("openai_api_key") or "").strip()
-        or streamlit_secret_api_key()
-        or config.OPENAI_API_KEY
+        (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip()
+        or streamlit_secret_api_key(provider)
+        or config.api_key_for_provider(provider)
     )
 
 
 def api_key_source() -> str:
-    if (st.session_state.get("openai_api_key") or "").strip():
+    provider = selected_provider()
+    if (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip():
         return "In-app session key"
-    if streamlit_secret_api_key():
+    if streamlit_secret_api_key(provider):
         return "Streamlit secrets"
-    if config.OPENAI_API_KEY:
+    if config.api_key_for_provider(provider):
         return ".env key"
     return "No API key"
 
@@ -411,12 +422,17 @@ def api_key_status_label() -> str:
 
 
 def model_options() -> list[str]:
-    return config.available_models(api_key=effective_api_key())
+    return config.available_models(api_key=effective_api_key(), provider=selected_provider())
 
 
-def streamlit_secret_api_key() -> str:
+def selected_provider() -> str:
+    return PROVIDER_LABELS.get(st.session_state.get("api_provider", "OpenAI"), "openai")
+
+
+def streamlit_secret_api_key(provider: str | None = None) -> str:
+    secret_name = PROVIDER_SECRET_NAMES[provider or selected_provider()]
     try:
-        return str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
+        return str(st.secrets.get(secret_name, "") or "").strip()
     except Exception:
         return ""
 
@@ -440,20 +456,19 @@ def start_custom_mode() -> None:
     database.clear_database()
 
 
-def save_uploaded_documents(files) -> None:
+def save_uploaded_documents(files) -> int:
     documents = []
     for uploaded in files:
-        suffix = uploaded.name.lower().split(".")[-1]
-        if suffix not in {"md", "markdown", "txt"}:
-            st.warning(f"{uploaded.name} skipped. TXT and Markdown uploads are supported in this MVP.")
-            continue
-        text = uploaded.getvalue().decode("utf-8", errors="ignore")
-        documents.append({"filename": uploaded.name, "path": uploaded.name, "text": text.strip()})
+        try:
+            documents.append(load_uploaded_document(uploaded))
+        except Exception as exc:
+            st.warning(f"{uploaded.name} skipped: {exc}")
     if documents:
         chunks = chunk_documents(documents)
         st.session_state.documents = documents
         st.session_state.chunks = chunks
         database.save_documents_and_chunks(documents, chunks, project_id=st.session_state.project_id)
+    return len(documents)
 
 
 def bool_series(series: pd.Series) -> pd.Series:
@@ -497,9 +512,9 @@ def render_overview() -> None:
 
     st.markdown(f"<span class='mode-pill'>{st.session_state.mode}</span>", unsafe_allow_html=True)
     if not effective_api_key():
-        st.info("Mock Demo Mode is active. Real prompt/model evaluation requires an OpenAI API key in Settings, Streamlit secrets, or `.env`.")
+        st.info("Mock Demo Mode is active. Add an OpenAI, Gemini, or Anthropic API key in Settings for real-model evaluation.")
     else:
-        st.success(f"Real LLM Mode is available using {api_key_source()}.")
+        st.success(f"Real LLM Mode is available for {st.session_state.api_provider} using {api_key_source()}.")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Documents", len(st.session_state.documents))
     c2.metric("Chunks", len(st.session_state.chunks))
@@ -549,10 +564,17 @@ def render_knowledge_base() -> None:
             st.session_state.chunks = chunks
             database.save_documents_and_chunks(documents, chunks, project_id=st.session_state.project_id)
             st.success(f"Loaded {len(documents)} documents and {len(chunks)} chunks.")
-        uploaded = st.file_uploader("Upload custom Markdown or TXT files", type=["md", "markdown", "txt"], accept_multiple_files=True)
+        uploaded = st.file_uploader(
+            "Upload knowledge-base documents",
+            type=UPLOAD_TYPES,
+            accept_multiple_files=True,
+            help="Supports text, Markdown, PDF, DOCX, RTF, CSV/TSV, Excel, JSON/JSONL, HTML, XML/YAML, and PPTX.",
+        )
+        st.caption("Legacy .doc and image-only/scanned documents are not supported; convert them to DOCX or searchable PDF first.")
         if uploaded and st.button("Index uploaded documents"):
-            save_uploaded_documents(uploaded)
-            st.success(f"Indexed {len(st.session_state.chunks)} chunks.")
+            loaded_count = save_uploaded_documents(uploaded)
+            if loaded_count:
+                st.success(f"Indexed {loaded_count} documents into {len(st.session_state.chunks)} chunks.")
         docs_df = database.documents_df()
         st.metric("Chunk count", len(st.session_state.chunks))
         if not docs_df.empty:
@@ -604,13 +626,12 @@ def render_eval_dataset() -> None:
         if st.button("Load sample evaluation dataset", type="primary"):
             st.session_state.eval_df = normalize_eval_dataset(load_sample_eval_dataset())
             st.success("Sample evaluation dataset loaded.")
-        uploaded = st.file_uploader("Upload evaluation CSV", type=["csv"])
+        uploaded = st.file_uploader("Upload evaluation dataset", type=EVALUATION_UPLOAD_TYPES)
         if uploaded is not None:
-            df = pd.read_csv(uploaded)
             try:
-                st.session_state.eval_df = normalize_eval_dataset(df)
-                st.success("Evaluation CSV validated and loaded.")
-            except ValueError as exc:
+                st.session_state.eval_df = read_eval_dataset(uploaded.name, uploaded.getvalue())
+                st.success("Evaluation dataset validated and loaded.")
+            except Exception as exc:
                 st.error(str(exc))
         df = st.session_state.eval_df
         if not df.empty:
@@ -621,7 +642,7 @@ def render_eval_dataset() -> None:
             st.bar_chart(df["expected_source"].value_counts())
     with c2:
         if st.session_state.eval_df.empty:
-            st.info("Required columns: question, expected_answer, expected_source, category, should_escalate")
+            st.info("CSV, TSV, Excel, JSON, and JSONL are supported. Required columns: question, expected_answer, expected_source, category, should_escalate")
         else:
             st.dataframe(st.session_state.eval_df, hide_index=True, use_container_width=True)
 
@@ -635,9 +656,9 @@ def render_run_evaluation() -> None:
         st.warning("Load an evaluation dataset before running evaluation.")
 
     if not effective_api_key():
-        st.info("No OpenAI API key is available, so evaluations will run with the deterministic Mock Model. Add a key in Settings for Real LLM Mode.")
+        st.info(f"No {st.session_state.api_provider} API key is available, so evaluations will run with the deterministic Mock Model.")
     else:
-        st.success(f"Real LLM Mode available via {api_key_source()}. You can still choose Mock Model for a free deterministic demo.")
+        st.success(f"{st.session_state.api_provider} is available via {api_key_source()}. You can still choose Mock Model.")
 
     mode = st.radio("Evaluation mode", ["Current Prompt Only", "Current Prompt vs Improved Prompt"], horizontal=True)
     model = st.selectbox("Model", model_options())
@@ -800,24 +821,35 @@ def render_prompt_comparison() -> None:
 
 def render_settings_export() -> None:
     st.title("Settings / Export")
-    st.subheader("API Key")
+    st.subheader("Model provider and API key")
     st.caption("In-app keys are stored only in Streamlit session state. They are not saved to SQLite and are not written to files.")
-    st.caption("Key priority: in-app key > Streamlit secrets > .env OPENAI_API_KEY > mock model fallback.")
-    entered_key = st.text_input(
-        "OpenAI API key",
-        value=st.session_state.get("openai_api_key", ""),
-        type="password",
-        placeholder="sk-...",
-        help="Priority: in-app key > Streamlit secrets > .env OPENAI_API_KEY > mock model fallback.",
+    provider_label = st.selectbox(
+        "Provider",
+        list(PROVIDER_LABELS),
+        index=list(PROVIDER_LABELS).index(st.session_state.get("api_provider", "OpenAI")),
     )
-    st.session_state.openai_api_key = entered_key.strip()
+    st.session_state.api_provider = provider_label
+    provider = selected_provider()
+    secret_name = PROVIDER_SECRET_NAMES[provider]
+    st.caption(f"Key priority: in-app key > Streamlit secrets > .env {secret_name} > mock model fallback.")
+    keys = dict(st.session_state.get("provider_api_keys", {}))
+    entered_key = st.text_input(
+        f"{provider_label} API key",
+        value=keys.get(provider, ""),
+        type="password",
+        placeholder="Paste the provider API key",
+        help=f"Priority: in-app key > Streamlit secrets > .env {secret_name} > mock model fallback.",
+    )
+    keys[provider] = entered_key.strip()
+    st.session_state.provider_api_keys = keys
     c1, c2, c3 = st.columns(3)
     c1.metric("Effective API key", api_key_status_label())
     c2.metric("Key source", api_key_source())
     c3.metric("Real LLM Mode", "Available" if effective_api_key() else "Unavailable")
-    if st.session_state.openai_api_key:
+    if keys.get(provider):
         if st.button("Clear in-app API key"):
-            st.session_state.openai_api_key = ""
+            keys[provider] = ""
+            st.session_state.provider_api_keys = keys
             st.success("In-app API key cleared from this session.")
             st.rerun()
     if not effective_api_key():
@@ -825,10 +857,11 @@ def render_settings_export() -> None:
     st.divider()
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Streamlit secrets key", "Present" if streamlit_secret_api_key() else "Not present")
-    c2.metric(".env OPENAI_API_KEY", "Present" if config.OPENAI_API_KEY else "Not present")
-    c3.metric("Model A", config.OPENAI_MODEL_A)
-    st.metric("Model B", config.OPENAI_MODEL_B)
+    provider_models = config.PROVIDER_MODELS[provider]
+    c1.metric("Streamlit secrets key", "Present" if streamlit_secret_api_key(provider) else "Not present")
+    c2.metric(f".env {secret_name}", "Present" if config.api_key_for_provider(provider) else "Not present")
+    c3.metric("Model A", provider_models[0])
+    st.metric("Model B", provider_models[1] if len(provider_models) > 1 else "Not configured")
     st.write(f"Database path: `{config.DATABASE_PATH}`")
 
     runs = database.eval_runs_df()

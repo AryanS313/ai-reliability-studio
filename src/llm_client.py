@@ -26,15 +26,21 @@ def generate_answer(
     api_key: str | None = None,
 ) -> dict:
     final_prompt = build_final_prompt(system_prompt, context, question)
-    effective_api_key = api_key or config.OPENAI_API_KEY
+    provider = config.provider_for_model(model_name)
+    effective_api_key = api_key or config.api_key_for_provider(provider)
     if model_name != "mock-model" and effective_api_key:
         try:
-            result = _openai_answer(final_prompt, model_name, effective_api_key)
+            if provider == "gemini":
+                result = _gemini_answer(final_prompt, model_name, effective_api_key)
+            elif provider == "anthropic":
+                result = _anthropic_answer(final_prompt, model_name, effective_api_key)
+            else:
+                result = _openai_answer(final_prompt, model_name, effective_api_key)
             result["final_prompt"] = final_prompt
             return result
         except Exception as exc:
             fallback = _mock_answer(question, context, system_prompt, "mock-model")
-            fallback["answer"] += f"\n\n[System note: OpenAI call failed; mock fallback used. {exc}]"
+            fallback["answer"] += f"\n\n[System note: {provider.title()} call failed; mock fallback used. {exc}]"
             fallback["final_prompt"] = final_prompt
             return fallback
     result = _mock_answer(question, context, system_prompt, model_name)
@@ -65,6 +71,49 @@ def _openai_answer(prompt: str, model_name: str, api_key: str) -> dict:
     latency_ms = (time.perf_counter() - start) * 1000
     input_tokens = input_tokens or config.approx_tokens(prompt)
     output_tokens = output_tokens or config.approx_tokens(answer)
+    return {
+        "answer": answer,
+        "model": model_name,
+        "latency_ms": round(latency_ms, 2),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost": round(config.estimate_cost(model_name, input_tokens, output_tokens), 6),
+    }
+
+
+def _gemini_answer(prompt: str, model_name: str, api_key: str) -> dict:
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
+    start = time.perf_counter()
+    response = client.models.generate_content(model=model_name, contents=prompt)
+    answer = response.text or ""
+    latency_ms = (time.perf_counter() - start) * 1000
+    usage = getattr(response, "usage_metadata", None)
+    input_tokens = getattr(usage, "prompt_token_count", None) or config.approx_tokens(prompt)
+    output_tokens = getattr(usage, "candidates_token_count", None) or config.approx_tokens(answer)
+    return _result(answer, model_name, latency_ms, input_tokens, output_tokens)
+
+
+def _anthropic_answer(prompt: str, model_name: str, api_key: str) -> dict:
+    from anthropic import Anthropic
+
+    client = Anthropic(api_key=api_key)
+    start = time.perf_counter()
+    response = client.messages.create(
+        model=model_name,
+        max_tokens=2048,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    answer = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
+    latency_ms = (time.perf_counter() - start) * 1000
+    input_tokens = getattr(response.usage, "input_tokens", None) or config.approx_tokens(prompt)
+    output_tokens = getattr(response.usage, "output_tokens", None) or config.approx_tokens(answer)
+    return _result(answer, model_name, latency_ms, input_tokens, output_tokens)
+
+
+def _result(answer: str, model_name: str, latency_ms: float, input_tokens: int, output_tokens: int) -> dict:
     return {
         "answer": answer,
         "model": model_name,
