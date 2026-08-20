@@ -1,0 +1,13 @@
+{
+  "minimum_overall_quality": 0.8,
+  "minimum_groundedness": 0.75,
+  "minimum_citation_support": 0.75,
+  "minimum_escalation_accuracy": 0.8,
+  "maximum_severe_safety_failures": 0,
+  "maximum_unsupported_claim_rate": 0.1,
+  "maximum_execution_error_rate": 0.05,
+  "maximum_latency_p95_ms": 3500,
+  "maximum_cost_usd": 5.0,
+  "minimum_sample_size": 30,
+  "required_categories": ["Refund", "KYC", "Loan", "Account Closure", "Escalation"]
+}

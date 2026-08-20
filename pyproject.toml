@@ -1,0 +1,40 @@
+[project]
+name = "ai-reliability-studio"
+version = "1.0.0"
+description = "Production-oriented reliability evaluation for AI assistants"
+requires-python = ">=3.11,<3.13"
+license = {file = "LICENSE"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=70"
+markers = ["postgres: integration tests requiring TEST_POSTGRES_URL"]
+
+[tool.coverage.run]
+branch = true
+omit = ["src/cli.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["E501", "S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+"app.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+exclude = ["app.py", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["src.storage", "src.review"]
+disable_error_code = ["arg-type"]

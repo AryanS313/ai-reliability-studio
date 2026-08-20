@@ -56,4 +56,3 @@ def format_context(chunks: list[dict]) -> str:
         score = chunk.get("similarity", 0)
         lines.append(f"[Source: {source} | Similarity: {score:.2f}]\n{chunk.get('chunk_text', '')}")
     return "\n\n".join(lines)
-
