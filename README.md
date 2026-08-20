@@ -1,5 +1,9 @@
 # AI Reliability Studio
 
+[**Open the live Streamlit demo →**](https://ai-reliability-studio.streamlit.app/)
+
+> The hosted demo uses synthetic scenarios for onboarding. Synthetic results demonstrate the workflow and are not model-quality or launch-readiness evidence.
+
 AI Reliability Studio is a production-oriented evaluation platform for testing AI assistants against versioned datasets, source documents, prompts, models, and real target APIs. It separates model-quality evidence from infrastructure failures and will not convert a synthetic demo into a launch-readiness claim.
 
 The platform answers a deliberately harder question than “does the chatbot look good?”:
