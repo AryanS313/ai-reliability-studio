@@ -8,4 +8,3 @@ def test_each_failure_type_returns_non_empty_suggestion():
 
 def test_passed_returns_no_action_required():
     assert suggestion_for_failure("Passed") == "No action required."
-

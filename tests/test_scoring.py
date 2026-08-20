@@ -24,13 +24,23 @@ def test_source_retrieval_score_matches_expected_source():
 
 def test_out_of_scope_source_scores_when_answer_refuses():
     answer = "I do not have enough information in the uploaded documents to answer this confidently."
-    assert source_retrieval_score("Out of Scope", [], answer) == 1
-    assert citation_correctness_score(answer, "Out of Scope") == 1
+    # Retrieval and response behavior are independent. A refusal does not turn
+    # an out-of-scope case into a successful source retrieval or citation.
+    assert source_retrieval_score("Out of Scope", [], answer) == 0
+    assert citation_correctness_score(answer, "Out of Scope") == 0
 
 
 def test_citation_and_escalation_correctness():
     answer = "Answer: Manual loan approval cannot be provided. Sources: Loan Rejection SOP. Escalation Required: Yes"
-    assert citation_correctness_score(answer, "Loan Rejection SOP") == 1
+    assert citation_correctness_score(answer, "Loan Rejection SOP") == 0
+    chunks = [
+        {
+            "source_name": "Loan Rejection SOP",
+            "chunk_id": "loan-1",
+            "chunk_text": "Manual loan approval cannot be provided and requests require credit review.",
+        }
+    ]
+    assert citation_correctness_score(answer, "Loan Rejection SOP", chunks) == 1
     assert detect_escalation(answer) is True
     assert escalation_correctness_score(answer, True) == 1
 
@@ -49,4 +59,3 @@ def test_hallucination_risk_flags_missing_source():
 
 def test_overall_reliability_score_formula():
     assert overall_reliability_score(1, 1, 1, 0.5, 1) == 0.9
-

@@ -14,6 +14,9 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .cache/
+.coverage*
+coverage.xml
+htmlcov/
 data/*.db
 data/*.sqlite
 data/*.sqlite3

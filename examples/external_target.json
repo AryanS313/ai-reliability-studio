@@ -1,0 +1,29 @@
+{
+  "name": "Production Support Assistant",
+  "endpoint": "https://assistant.example.com/v1/chat",
+  "method": "POST",
+  "headers": {
+    "Authorization": "secret://ASSISTANT_API_TOKEN"
+  },
+  "request_template": {
+    "input": "${question}",
+    "conversation_history": "${conversation_history}",
+    "context": "${context}",
+    "customer_segment": "${user_segment}"
+  },
+  "response_mappings": {
+    "answer": "$.response.answer",
+    "citations": "$.response.citations",
+    "escalation": "$.response.escalation",
+    "tool_calls": "$.response.tool_calls",
+    "input_tokens": "$.usage.input_tokens",
+    "output_tokens": "$.usage.output_tokens",
+    "cost": "$.usage.cost_usd",
+    "model": "$.metadata.model",
+    "metadata": "$.metadata"
+  },
+  "timeout_seconds": 30,
+  "retry_count": 2,
+  "streaming": false,
+  "health_check_path": "health"
+}

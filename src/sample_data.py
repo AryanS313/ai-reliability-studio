@@ -20,7 +20,7 @@ def load_sample_documents() -> tuple[list[dict], list[dict]]:
 
 
 def load_sample_eval_dataset() -> pd.DataFrame:
-    return pd.read_csv(config.DATA_DIR / "eval_questions.csv")
+    return pd.read_json(config.ROOT_DIR / "examples" / "evaluation_dataset_v1.jsonl", lines=True)
 
 
 def load_prompt(path_name: str) -> str:
