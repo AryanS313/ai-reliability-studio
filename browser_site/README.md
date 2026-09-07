@@ -22,7 +22,7 @@ The builder pins official inputs by hash and size. The assembler verifies the ge
 
 ## Runtime boundaries
 
-Use a current Chrome browser with cross-origin isolation available. Both document routes and static worker assets must retain the committed COOP/COEP headers. Workspace data and entered keys live in the tab's memory; navigating away, closing or reloading ends that workspace. Download a workspace export to resume later. Exported review data should be handled as private data.
+Use a current Chrome browser with cross-origin isolation available. Both document routes must retain the committed COOP/COEP headers. The runtime workers use Blob module entries to inherit that isolation policy even when the host drops custom static-asset headers. Workspace data and entered keys live in the tab's memory; navigating away, closing or reloading ends that workspace. Download a workspace export to resume later. Exported review data should be handled as private data.
 
 Paid provider calls require a visitor-supplied key and explicit authorization in the app. The browser sends selected source material and the key directly to the chosen provider. No owner key is bundled. Six configured models use a restricted, nonstreaming fetch transport; arbitrary external connectors are disabled. Runs execute one answer at a time. Synthetic checks and mocked provider responses do not establish live-account access or evaluation accuracy.
 

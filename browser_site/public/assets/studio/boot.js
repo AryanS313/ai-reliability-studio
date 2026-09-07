@@ -23,12 +23,27 @@ const stages={
 };
 const OriginalWorker=window.Worker;
 const runtimeWorkers = new Set();
-window.addEventListener('pagehide',()=>{root.hidden=true;for(const worker of runtimeWorkers)worker.terminate();runtimeWorkers.clear();});
+const runtimeEntryUrls = new Set();
+window.addEventListener('pagehide',()=>{root.hidden=true;for(const worker of runtimeWorkers)worker.terminate();runtimeWorkers.clear();for(const url of runtimeEntryUrls)URL.revokeObjectURL(url);runtimeEntryUrls.clear();});
 // A restored history entry has DOM but its terminated workers cannot resume.
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 window.Worker=class extends OriginalWorker{
-  constructor(...args){
-    super(...args);
+  constructor(script,options){
+    const source=new URL(script,location.href);
+    let entry=script;
+    // Blob workers inherit the document's isolation policy. The static host
+    // need not add COEP to the imported module response for this entry point.
+    if(source.origin===location.origin && source.pathname===base+'stlite/assets/worker-DB8fls9q.js'){
+      if(options?.type!=='module')throw new Error('Unexpected runtime worker type');
+      entry=URL.createObjectURL(new Blob(['import '+JSON.stringify(source.href)+';'],{type:'text/javascript'}));
+      runtimeEntryUrls.add(entry);
+    }
+    try{super(entry,options);}catch(error){if(entry!==script){URL.revokeObjectURL(entry);runtimeEntryUrls.delete(entry);}throw error;}
+    if(entry!==script){
+      const releaseEntry=()=>{URL.revokeObjectURL(entry);runtimeEntryUrls.delete(entry);};
+      this.addEventListener('message',releaseEntry,{once:true});
+      this.addEventListener('error',releaseEntry,{once:true});
+    }
     runtimeWorkers.add(this);
     this.addEventListener('error',(event)=>{fail(); if(location.hostname==='localhost')statusLabel.textContent+=' '+String(event.message || 'Worker failed to load')+' '+String(event.filename || '');});
     this.addEventListener('message',({data})=>{
