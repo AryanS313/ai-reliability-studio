@@ -9,6 +9,7 @@ class TargetType(str, Enum):
     SYNTHETIC = "synthetic_mock"
     FOUNDATION_MODEL = "foundation_model"
     EXTERNAL_API = "external_api"
+    SAVED_RESPONSES = "saved_responses"
 
 
 class ExecutionStatus(str, Enum):
@@ -99,6 +100,9 @@ class CitationAssessment:
     supports_claim: bool
     completeness: float
     citations: tuple[dict[str, Any], ...] = ()
+    # False supports_claim means no verified credit; support_state distinguishes
+    # an established defect from semantic support that still requires review.
+    support_state: str = "unverified"
 
 
 @dataclass(frozen=True)

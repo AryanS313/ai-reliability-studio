@@ -98,3 +98,47 @@ def test_comparison_reports_gate_failure_and_version_differences():
     assert any(
         item["severity"] == "critical" and item["delta"] == 1 for item in comparison["failure_count_deltas"]["severity"]
     )
+
+
+def test_partial_calibration_does_not_count_as_fully_calibrated():
+    rows = _rows()
+    rows.loc[0, "calibration_status"] = None
+    result = evaluate_candidate(rows)
+    gate = next(item for item in result["gate_results"] if item["name"] == "minimum_evaluator_calibration")
+    assert gate["passed"] is False
+    assert result["verdict"] == "Insufficient Evidence"
+
+
+def test_missing_or_invalid_measurements_cannot_pass_configured_budget_gates():
+    for missing in (None, float("inf"), -1):
+        rows = _rows()
+        rows["latency_ms"] = rows["latency_ms"].astype(float)
+        rows.loc[0, "latency_ms"] = missing
+        rows.loc[0, "estimated_cost"] = missing
+        result = evaluate_candidate(rows, LaunchGateConfig(maximum_latency_p95_ms=500, maximum_cost_usd=1))
+        assert result["metrics"]["latency_p95_ms"] is None
+        assert result["metrics"]["total_cost_usd"] is None
+        assert result["metrics"]["cost_measurement_count"] == 34
+        gates = {gate["name"]: gate for gate in result["gate_results"]}
+        assert gates["maximum_latency_p95_ms"]["passed"] is False
+        assert gates["maximum_cost_usd"]["passed"] is False
+        assert result["launch_blocked"] is True
+
+
+def test_cost_budget_includes_reported_cost_of_unsuccessful_executions():
+    rows = _rows()
+    rows.loc[0, "execution_status"] = "timed_out"
+    rows.loc[0, "estimated_cost"] = 10
+    result = evaluate_candidate(rows, LaunchGateConfig(maximum_cost_usd=1))
+    assert result["metrics"]["total_cost_usd"] > 10
+    gate = next(item for item in result["gate_results"] if item["name"] == "maximum_cost_usd")
+    assert gate["passed"] is False
+
+
+def test_high_scores_do_not_override_an_unresolved_evaluator_decision():
+    rows = _rows().assign(determination_state="determined")
+    rows.loc[0, "determination_state"] = "unable_to_determine"
+    result = evaluate_candidate(rows)
+    gate = next(item for item in result["gate_results"] if item["name"] == "evaluator_determinations_complete")
+    assert gate["passed"] is False
+    assert result["verdict"] == "Insufficient Evidence"

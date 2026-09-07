@@ -106,6 +106,8 @@ def redact_secrets(value: Any, *, preserve_references: bool = True) -> Any:
         return {
             key: (
                 item
+                if _token_quantity(str(key), item)
+                else item
                 if preserve_references
                 and _secret_key(str(key))
                 and isinstance(item, str)
@@ -222,6 +224,27 @@ def _secret_key(key: str) -> bool:
         term in normalized
         for term in ["apikey", "authorization", "password", "secret", "token", "cookie", "credential", "sessionid"]
     )
+
+
+def _token_quantity(key: str, value: Any) -> bool:
+    """Preserve typed model budgets/usage without exempting token credentials."""
+    normalized = re.sub(r"[^a-z]", "", key.lower())
+    quantity_keys = {
+        "maxtokens",
+        "maxoutputtokens",
+        "maxcompletiontokens",
+        "tokenlimit",
+        "tokenbudget",
+        "tokencount",
+        "inputtokens",
+        "outputtokens",
+        "totaltokens",
+        "prompttokens",
+        "completiontokens",
+        "cachedtokens",
+        "reasoningtokens",
+    }
+    return normalized in quantity_keys and (value is None or (type(value) is int and value >= 0))
 
 
 def _pii_evidence(

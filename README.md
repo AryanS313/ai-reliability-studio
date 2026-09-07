@@ -2,22 +2,19 @@
 
 [**Open the live Streamlit demo →**](https://ai-reliability-studio.streamlit.app/)
 
-> The hosted demo uses synthetic scenarios for onboarding. Synthetic results demonstrate the workflow and are not model-quality or launch-readiness evidence.
+> Start with **Try sample** or **Review saved answers**; neither needs an API key. Public workspaces are private to a browser session and temporary. Download your workspace before leaving. The Streamlit Community Cloud host can hibernate after inactivity; see [hosting options](docs/HOSTING_OPTIONS.md).
 
-AI Reliability Studio is a production-oriented evaluation platform for testing AI assistants against versioned datasets, source documents, prompts, models, and real target APIs. It separates model-quality evidence from infrastructure failures and will not convert a synthetic demo into a launch-readiness claim.
+AI Reliability Studio helps review AI assistants against versioned questions, source documents, saved answers, and real target APIs. It keeps source evidence, returned citations/actions, review decisions, and replacement comparisons together. Automatic checks are advisory and can be wrong or uncertain; the app does not certify launch readiness.
 
-The platform answers a deliberately harder question than “does the chatbot look good?”:
-
-> For this exact prompt, dataset, document snapshot, retrieval configuration, model, and target version, what evidence supports—or blocks—a controlled launch?
-
-## Trust guarantees
+## Evidence handling
 
 - Synthetic runs are always labeled `Synthetic demonstration — not model-quality evidence` and never receive a launch verdict.
 - Provider, timeout, authentication, rate-limit, and invalid-response failures are stored as execution errors and are excluded from quality averages.
-- Deterministic contradictions involving negation, dates, quantities, policy exceptions, or unauthorized decisions cap the quality score and cannot be overridden by an advisory LLM judge.
-- Citations earn support credit only when they resolve to retrieved evidence and support an assessed claim. A source title alone is insufficient.
+- Detected deterministic contradictions involving negation, dates, quantities, policy exceptions, or unauthorized decisions cap the quality score and cannot be overridden by an advisory LLM judge. Undetected errors and false flags remain possible.
+- Citation checks require an exact evidence match and an assessed supporting claim. A source title alone is insufficient; uncertain semantic support remains unverified.
 - Every read, write, export, and destructive operation is workspace scoped. Production mode refuses unauthenticated single-user operation.
-- Prompts, datasets, documents, targets, and run manifests are immutable/versioned inputs. Historical results remain reproducible.
+- Prompts, datasets, documents, targets, and run manifests record versioned inputs. Stored results can be inspected; a new provider call is not guaranteed to reproduce a historical answer.
+- Saved answers start pending review. Decisions carry reviewer attribution and hashes of the answer, case, and source packet. AI-assisted reviews remain labeled as such. A partial retest reports only the cases actually supplied.
 
 ## Capabilities
 
@@ -45,7 +42,11 @@ cp .env.example .env
 streamlit run app.py
 ```
 
-In the UI, select **Load Sample Fintech Demo**, inspect **Target Setup**, and run the generic synthetic target. The result demonstrates the workflow only; the product deliberately blocks a readiness verdict. Use **Evaluator Calibration** to import/edit independent held-out human labels; until its configured requirements are met, real candidates remain insufficiently calibrated.
+In the UI, select **Try sample**, inspect each answer and its source, record your review, then try the two replacement answers. The fictional sample demonstrates both a wrong time limit and an incorrectly routed action. Its results are not evidence about an actual model or customer.
+
+Choose **Review saved answers** to upload files or paste JSON. Download starter files for the source, question, and response formats. Reports can be exported as HTML, JSON, or CSV; a workspace JSON preserves the inputs and reviews for resuming in another session. **Evaluate live assistant** guides you through sources, questions, connection, and results. Additional project tools are in the sidebar.
+
+The app defaults to `AUTH_MODE=public-session`. For a durable, trusted local workspace only, run `AUTH_MODE=single-user streamlit run app.py`; do not expose that mode publicly. Environment variables explicitly set by the launch command take precedence over `.env`.
 
 To run the complete development checks:
 
@@ -61,8 +62,8 @@ pytest
 
 Choose one of these paths in **Target Setup**:
 
-1. **Foundation model** — select a configured OpenAI, Google Gemini, or Anthropic model and provide its key through the environment, Streamlit secrets, or the current browser session.
-2. **External API** — import a versioned configuration such as [`examples/external_target.json`](examples/external_target.json). Secret values must use `secret://NAME` references; raw credentials are rejected from persisted configuration.
+1. **Foundation model** — select a configured OpenAI, Google Gemini, or Anthropic model and supply your key. Public sessions use only keys entered in that session; they never fall back to owner credentials. Trusted local/authenticated deployments can also use configured server keys.
+2. **External API** — import a versioned configuration such as [`examples/external_target.json`](examples/external_target.json). Secret values must use `secret://NAME` references; raw credentials are rejected from persisted configuration. Public deployments restrict destinations to administrator-approved HTTPS hosts and reject internal network addresses.
 
 The preflight summary shows the exact candidate count, unique cases, total external calls, concurrency, retry policy, and estimated cost where pricing is known. Real calls require explicit confirmation.
 
@@ -80,7 +81,8 @@ Use CSV, TSV, XLS/XLSX, JSON, or JSONL. Legacy columns remain accepted, while th
 | `expected_passages` | no | Exact passage/provenance expectations |
 | `should_escalate` | yes | Strict boolean escalation expectation |
 | `case_id` | generated if absent | Stable identity across runs |
-| `category`, `severity`, `tags` | recommended | Coverage and gating dimensions |
+| `category` | yes | Coverage dimension; use a meaningful category such as `citation` or `escalation` |
+| `severity`, `tags`, `expected_behavior` | yes for the versioned schema | Coverage and gating dimensions; the starter files include these values |
 | `unacceptable_answers` | no | Explicit prohibited outcomes |
 | `rubric` | no | Required and forbidden scoring constraints |
 | `escalation_destination`, `escalation_urgency` | no | Structured escalation expectations |
@@ -129,6 +131,7 @@ Exit codes are `0` for passing real-target gates, `2` for a gate failure (includ
 ## Storage and deployment modes
 
 - **Local development/demo:** SQLite with additive migrations and a single local workspace.
+- **Anonymous public demo:** a separate temporary SQLite database per browser session, session-only credentials, explicit deletion, and workspace downloads for resuming. This is the default UI/container mode.
 - **Production:** PostgreSQL, trusted proxy/OIDC-proxy authentication, provisioned users/memberships, TLS termination, and row-level security from [`migrations/postgres.sql`](migrations/postgres.sql).
 
 `APP_ENV=production` with `AUTH_MODE=single-user` fails closed. SQLite is not presented as multi-user production storage. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), [`docs/MIGRATION_GUIDE.md`](docs/MIGRATION_GUIDE.md), and [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md).
@@ -148,6 +151,9 @@ Further reading:
 
 ## Known limits
 
+- Deterministic scoring is not a validated general-purpose hallucination detector. Plausible paraphrases, exemptions, and multi-claim answers can remain uncertain or be mislabeled. Review source evidence and returned actions before confirming a finding. Human review does not make an arbitrary dataset representative of production.
+- Saved-answer imports do not measure the client's retrieval, latency, or cost. Missing measurements stay unknown; declared origin and capture times are supplied by the uploader.
+- Community Cloud hibernation is a hosting policy, not a setting that this repository can disable. An always-running deployment needs suitable hosting; the included Docker setup alone does not change the public host's policy.
 - The bundled dense-retrieval default is lightweight TF-IDF; a sentence-transformer embedder can be injected when that dependency is deployed.
 - Image-only PDFs require an external OCR extension. Extraction warnings are preserved instead of inventing text.
 - The bundled job queue, artifact store, schedule registry, malware scanner, and OCR adapters are explicit local/unavailable foundations and are not production-ready. Durable workers and managed queue/object-storage/scheduling/scanning/OCR backends remain deployment responsibilities.

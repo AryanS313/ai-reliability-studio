@@ -15,6 +15,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+APP_RELEASE = "2026.09.07.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -26,6 +27,7 @@ DATABASE_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "ai_reliability_studi
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 AUTH_MODE = os.getenv("AUTH_MODE", "single-user").lower()
+PUBLIC_SESSION_TTL_SECONDS = int(os.getenv("PUBLIC_SESSION_TTL_SECONDS", "86400"))
 AUTH_SESSION_MAX_AGE_SECONDS = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "3600"))
 AUTH_REQUIRE_ISSUED_AT = os.getenv(
     "AUTH_REQUIRE_ISSUED_AT", "true" if APP_ENV == "production" else "false"
@@ -148,13 +150,20 @@ ESCALATION_KEYWORDS = [
 def available_models(api_key: str | None = None, provider: str = "openai") -> list[str]:
     models = ["mock-model"]
     provider = provider.lower()
-    if api_key or PROVIDER_API_KEYS.get(provider):
+    if api_key or api_key_for_provider(provider):
         models.extend(PROVIDER_MODELS.get(provider, []))
     return list(dict.fromkeys([m for m in models if m]))
 
 
 def api_key_for_provider(provider: str) -> str:
+    if public_sessions_enabled():
+        return ""
     return PROVIDER_API_KEYS.get(provider.lower(), "")
+
+
+def public_sessions_enabled() -> bool:
+    """Explicit anonymous mode; it never weakens the normal production auth mode."""
+    return AUTH_MODE == "public-session"
 
 
 def provider_for_model(model_name: str) -> str:

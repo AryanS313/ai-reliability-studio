@@ -6,7 +6,7 @@ Protected assets include customer documents, evaluation datasets, prompts, targe
 
 ## Identity and authorization
 
-- Development defaults to a single local user. `APP_ENV=production` refuses `AUTH_MODE=single-user`.
+- The UI defaults to `AUTH_MODE=public-session`: a random, private temporary SQLite database and identity for each browser session. CLI/local single-user mode must not be exposed publicly. `APP_ENV=production` refuses `AUTH_MODE=single-user`.
 - Production supports trusted proxy/OIDC-proxy headers only when `AUTH_TRUSTED_PROXY=true`; the edge proxy must strip client-supplied identity headers and inject authenticated values plus `X-Auth-Issued-At`. Control characters, stale/future sessions, unknown/disabled users, revoked memberships, and sessions older than a user's revocation timestamp are rejected.
 - Membership roles are owner, admin, editor, reviewer, and viewer. Repository methods re-check persisted membership and minimum role.
 - All workspace-owned reads/writes include `workspace_id`. PostgreSQL adds RLS as defense in depth.
@@ -14,7 +14,7 @@ Protected assets include customer documents, evaluation datasets, prompts, targe
 
 ## Secrets
 
-Persisted target configurations may contain `secret://NAME` references only. Raw secret-like values are rejected. Runtime resolvers use environment or deployment-managed secret values. Sanitized errors, metadata, structured logs, audit payloads, and reports redact secret fields/patterns.
+Persisted target configurations may contain `secret://NAME` references only. Raw secret-like values are rejected. Public sessions use only session-supplied provider and target credentials, with no environment/owner-key fallback. Trusted local and authenticated deployments can use configured runtime secrets. Sanitized errors, metadata, structured logs, audit payloads, and reports redact secret fields/patterns.
 
 Do not place secrets in prompts, documents, datasets, CLI arguments, filenames, or Git. Rotate a credential immediately if it may have entered a run or log.
 
@@ -30,17 +30,21 @@ Evaluation data may contain personal or regulated information. Collect only what
 
 Workspace retention is configurable. Purge operations are owner-only, workspace scoped, transactional, and audited while immutable audit history is retained. A legal-hold-aware retention policy interface exists for deployment orchestration. Backups, replicas, object storage, observability systems, and exported files need matching deletion and retention controls outside this repository.
 
+Anonymous public sessions are temporary: default idle expiry is 24 hours, checked on subsequent requests. Explicit session deletion removes that session's database and in-memory UI state/keys. Normal session cleanup or process exit removes temporary directories; abrupt host termination may leave files for OS temporary-file cleanup. Public workspaces are not organizational record storage.
+
 ## Destructive actions
 
-There is no destructive global database reset. Clearing results requires admin authorization and explicit confirmation; resetting a workspace requires owner authorization and deletes only that workspace’s entities. Audit history is retained. Always back up production storage before migrations or bulk retention operations.
+There is no destructive global database reset. Clearing results requires admin authorization and explicit confirmation; resetting a durable workspace requires owner authorization and deletes only that workspace’s entities while retaining its audit history. **End session and clear my data** deletes the anonymous visitor's whole temporary workspace. Always back up production storage before migrations or bulk retention operations.
 
 ## External target controls
 
-External URLs require HTTPS outside local development. Production refuses an empty host allowlist, resolves approved hosts before each call, rejects private/reserved DNS results, disables redirects, and verifies the final response URL did not change origin. Request/response byte limits, TLS verification, and timeouts are enforced. The deployment network must still enforce approved egress as defense in depth. Authentication failures, 429s, invalid JSON paths, oversized responses, and response-shape errors are sanitized execution failures.
+External URLs require HTTPS outside trusted local development. Production and anonymous public sessions refuse an empty host allowlist, resolve approved hosts before each call, reject private/reserved DNS results, disable redirects, and verify the final response URL did not change origin. Public mode does not honor the private-network opt-in used by trusted deployments. Request/response byte limits, TLS verification, and timeouts are enforced. The deployment network must still enforce approved egress as defense in depth. Authentication failures, 429s, invalid JSON paths, oversized responses, and response-shape errors are sanitized execution failures.
 
 ## Reports, logs, and exports
 
 Reports carry immutable run/candidate/input/evaluator/threshold provenance, evidence classification, calibration/review status, execution counts, and limitations. PII redaction is on by default, secret references are removed, CSV cells are protected against spreadsheet formula injection, and exports over the configured row limit are rejected rather than assembled unboundedly in memory. Export creation is workspace-scoped and audited.
+
+The guided saved-answer workspace download is a portable copy of the uploaded inputs and reviews for resuming work; it is not a redacted report. It deliberately contains the source text and answers. Keep it private. Guided downloads operate on that session's review state and do not create durable organizational export-audit records.
 
 Structured logs redact authentication headers, API keys, secret references, cookies, tokens, and detected PII. Correlation and run IDs remain available, while errors are categorized as user, evaluator, provider, internal, or security events. Sanitizer failures emit a content-withheld event and cannot alter an evaluation result. `LOG_RETENTION_DAYS` defines the expected sink cutoff; the external log backend must enforce deletion.
 

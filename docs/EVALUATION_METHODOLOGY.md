@@ -1,5 +1,13 @@
 # Evaluation methodology
 
+Automatic checks are advisory. The guided saved-answer workflow requires an explicit review before marking an answer reviewed, even when deterministic checks pass. Uncertainty is an outcome, not evidence that an answer is correct. There is no claim that the bundled evaluator reliably detects arbitrary hallucinations or certifies a deployment.
+
+## Saved answers and review comparisons
+
+Import questions, a complete reference packet, and saved responses with matching case IDs. Source retrieval performed by the client's assistant is not reconstructed by looking up those uploaded sources. Client retrieval, latency, and cost remain unknown when they were not supplied. Target identity and capture time are uploader declarations.
+
+Review decisions are separate from automatic labels. A review binds the response hash, case version, and knowledge-base version, together with an explanation, reviewer, timestamp, and human/AI-assisted attribution. Replacing an answer invalidates the prior answer's review. Comparisons require the same questions and sources, and report unmatched or pending cases explicitly. A resolved supplied answer does not prove that a deployed assistant has been fixed.
+
 ## Evidence unit
 
 The unit of interpretation is a candidate: one prompt version, exact model, target version, dataset version, document snapshot, retrieval configuration, evaluator configuration, and run environment. Candidates are never pooled for readiness decisions.
@@ -40,6 +48,10 @@ Evidence stores document ID/version, chunk ID, source, page or section, text spa
 
 Citation assessment separates presence, source validity, claim support, and completeness. Inline citations and structured citations returned by external APIs are accepted. Structured citations must resolve to an exact retrieved chunk or a document/version plus exact location. Mentioning a source title does not demonstrate support.
 
+`support_state` distinguishes verified support, unverified semantic support, established unsupported coverage, missing citations, and unresolved provenance. When a resolved citation's claim-to-passage assessment is unverifiable, it receives no citation credit and requires review with `evaluator_uncertain`; that uncertainty is not labeled an established `citation_failure`. The legacy boolean `supports_claim=false` means verified credit was not earned, so read it together with `support_state`. Missing required citations, invalid or ambiguous anchors, incorrect document versions, and established wrong-claim or contradicted support remain defects, even when another claim is uncertain.
+
+This distinction depends on the deterministic claim assessment. Its definitive-claim fallback can still misclassify unfamiliar paraphrases with little word overlap as unsupported. Resolving an exact citation does not guarantee an accurate semantic judgment; independent review remains necessary.
+
 ### Escalation
 
 Escalation is not inferred from a positive keyword alone. The evaluator handles negation and structured fields for decision, destination, reason, and urgency. It can return `unable_to_determine`; it does not force an uncertain case into a pass.
@@ -48,7 +60,7 @@ Escalation is not inferred from a positive keyword alone. The evaluator handles 
 
 An execution can carry multiple labels, including policy contradiction, unsupported claim, unauthorized decision, missed/excessive escalation, privacy violation, prompt-injection compliance, harmful/prohibited action, and infrastructure failure. Critical labels can independently fail a gate.
 
-Label semantics are versioned (`failure-labels-v1`) and stored with every run:
+Label semantics are versioned (`failure-labels-v3`, evaluator `deterministic-v6`) and stored with every run. Existing calibration must match the evaluator and semantics versions; changing the scorer cannot reuse a stale calibration as current evidence.
 
 | Label | Exact meaning | Critical by default |
 |---|---|---:|
@@ -56,7 +68,8 @@ Label semantics are versioned (`failure-labels-v1`) and stored with every run:
 | `policy_contradiction` | Mutually incompatible claims were established for the same proposition and scope. Numeric difference alone is insufficient. | yes |
 | `unsafe_response` | A high-precision privacy, unauthorized-decision, prompt/secret-disclosure, or prohibited-action component fired. | yes |
 | `unsupported_claim` | A definitive claim lacks supporting retrieved evidence. It is not automatically a contradiction. | no |
-| `citation_failure` | A required citation is absent, cannot resolve to retrieved evidence, or does not support an assessed claim. | no |
+| `citation_failure` | A required citation is absent, has invalid or unresolved provenance, cites established unsupported or contradicted claims, or leaves established claims uncited. Semantic uncertainty about a resolved citation receives no credit and requires review; it is not an established citation defect. | no |
+| `evaluator_uncertain` | A claim or resolved citation's semantic support cannot be established. Review is required, without declaring a policy/citation error or awarding a quality pass. | no |
 | `retrieval_failure` | The expected source or passage was absent from the retrieved evidence set. | no |
 | `escalation_failure` | The escalation decision is wrong or cannot be determined for an explicit expectation. | no |
 | `infrastructure_failure` | The target timed out, was rate-limited, failed, was cancelled, or returned an invalid response. It receives no quality score. | separate execution-error gate |
@@ -105,3 +118,5 @@ Costs are estimates from exact model IDs and a versioned pricing table. The esti
 ## Known methodological limits
 
 Deterministic text scoring cannot establish every semantic implication. Retrieval relevance depends on the configured embedder and reranker. Human review data is measured but does not silently retrain or modify scoring. Production readiness still requires security, privacy, load, recovery, and operational acceptance outside model-quality evaluation.
+
+Scoped exemptions are checked against the waived dimension; a size exemption must not be mistaken for a waiver of a separate time limit. An epistemic abstention such as "I cannot determine this from the supplied evidence" is unverifiable, while any additional definitive assertion is still assessed. These rules address known regressions and do not establish general semantic accuracy.

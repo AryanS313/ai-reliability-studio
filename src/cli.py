@@ -7,11 +7,11 @@ import sys
 from pathlib import Path
 
 from src import database
-from src.aggregation import LaunchGateConfig, evaluate_candidates
+from src.aggregation import LaunchGateConfig
 from src.chunker import chunk_documents
 from src.document_loader import load_documents
 from src.evaluator import read_eval_dataset, run_evaluation
-from src.reporting import csv_report, html_report, json_report
+from src.reporting import build_report_payload, render_report_payload, validate_launch_gates
 from src.storage import SQLiteRepository
 from src.targets import ExternalHTTPTarget, ExternalTargetConfig, SecretResolver
 
@@ -39,14 +39,35 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--top-k", type=int, default=3)
     run.add_argument("--similarity-threshold", type=float, default=0.05)
     run.add_argument("--max-concurrency", type=int, default=4)
+    replay = subparsers.add_parser("replay", help="Review saved responses offline; no launch verdict")
+    replay.add_argument("--dataset", required=True)
+    replay.add_argument("--responses", required=True)
+    replay.add_argument("--document", action="append", required=True)
+    replay.add_argument("--target-name", required=True)
+    replay.add_argument("--target-version", required=True)
+    replay.add_argument("--captured-at", required=True)
+    replay.add_argument("--evidence-kind", choices=["client_supplied", "fixture"], default="client_supplied")
+    replay.add_argument("--reviews")
+    replay.add_argument("--gate-config")
+    replay.add_argument("--output", default="ars-response-review.json")
+    replay.add_argument("--format", choices=["json", "csv", "html"], default="json")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command != "run":
+    if args.command not in {"run", "replay"}:
         return EXIT_CONFIGURATION_ERROR
     try:
+        gate_values = json.loads(Path(args.gate_config).read_text(encoding="utf-8")) if args.gate_config else {}
+        if not isinstance(gate_values, dict):
+            raise ValueError("Gate configuration must be a JSON object.")
+        try:
+            gates = validate_launch_gates(LaunchGateConfig(**gate_values))
+        except TypeError as exc:
+            raise ValueError(f"Invalid gate configuration: {exc}") from exc
+        if args.command == "replay":
+            return _replay(args, gates)
         repository = SQLiteRepository(args.database)
         database.set_repository(repository)
         context = repository.local_context()
@@ -92,12 +113,10 @@ def main(argv: list[str] | None = None) -> int:
             target_adapter=target,
             max_concurrency=args.max_concurrency,
         )
-        report = {"json": json_report, "csv": csv_report, "html": html_report}[args.format](results)
-        Path(args.output).write_text(report, encoding="utf-8")
-        gate_values = json.loads(Path(args.gate_config).read_text(encoding="utf-8")) if args.gate_config else {}
-        gates = LaunchGateConfig(**gate_values)
-        evaluations = evaluate_candidates(results, gates)
-        if any(
+        payload = build_report_payload(results, gates=gates)
+        Path(args.output).write_text(render_report_payload(payload, format=args.format), encoding="utf-8")
+        evaluations = payload["candidates"]
+        if not evaluations or any(
             result["verdict"] not in {"Ready for Internal Testing", "Ready for Controlled Beta"}
             for result in evaluations.values()
         ):
@@ -108,6 +127,32 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return EXIT_CONFIGURATION_ERROR
+
+
+def _replay(args: argparse.Namespace, gates: LaunchGateConfig) -> int:
+    from src.saved_responses import apply_response_reviews, evaluate_saved_responses, read_response_file
+
+    dataset_path = Path(args.dataset)
+    response_path = Path(args.responses)
+    dataset = read_eval_dataset(dataset_path.name, dataset_path.read_bytes())
+    responses = read_response_file(response_path.name, response_path.read_bytes())
+    chunks = chunk_documents(load_documents(args.document))
+    results = evaluate_saved_responses(
+        dataset,
+        responses,
+        chunks,
+        target_name=args.target_name,
+        target_version=args.target_version,
+        captured_at=args.captured_at,
+        evidence_kind=args.evidence_kind,
+    )
+    if args.reviews:
+        review_path = Path(args.reviews)
+        results = apply_response_reviews(results, read_response_file(review_path.name, review_path.read_bytes()))
+    payload = build_report_payload(results, gates=gates)
+    Path(args.output).write_text(render_report_payload(payload, format=args.format), encoding="utf-8")
+    # A successful offline review is still not a launch certification.
+    return EXIT_GATE_FAILURE
 
 
 if __name__ == "__main__":
