@@ -783,7 +783,10 @@ def render_overview() -> None:
             navigate_to("Review saved answers")
     with c3, st.container(border=True):
         st.subheader("Collect new answers")
-        st.write("Connect your API or a model provider, then run a set of questions you control.")
+        if external_connections_available():
+            st.write("Connect your API or a model provider, then run a set of questions you control.")
+        else:
+            st.write("Choose a model provider, then run a set of questions you control.")
         if st.button("Evaluate live assistant", use_container_width=True, key="start_live"):
             st.session_state.live_step = "1. Sources"
             navigate_to("Evaluate live assistant")
