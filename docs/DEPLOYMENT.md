@@ -32,7 +32,7 @@ For authenticated, durable workspaces, use the production prerequisites below. A
 
 ## Production prerequisites
 
-- Python 3.11 or 3.12 with pinned `requirements.txt`. Do not use the macOS system Python 3.9/LibreSSL runtime;
+- Python 3.11 or 3.12 with `requirements.txt`, which applies `requirements-lock.txt` to transitive dependencies as well. Community Cloud uses the same constraints as CI. Do not use the macOS system Python 3.9/LibreSSL runtime;
   create a fresh virtual environment from a supported CPython build.
 - Managed PostgreSQL with backups, TLS, and migration privileges.
 - Trusted authentication proxy that strips inbound `X-Auth-*` headers and injects `X-Auth-Subject`, `X-Auth-Email`, and optional `X-Auth-Name`.

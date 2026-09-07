@@ -7,6 +7,9 @@ All notable changes are documented here. The project follows semantic versioning
 - Add guided sample, saved-answer import/review/export/resume, and live-evaluation paths while retaining advanced project tools.
 - Keep automatic checks separate from explicit source reviews, preserve AI-assisted attribution, and compare only the supplied replacement cases.
 - Isolate anonymous visitors in temporary per-session databases and require session-supplied keys. Explicit deletion clears that visitor's data and keys.
+- Repair the pinned provider transports and Claude Sonnet 5 sampling parameters; distinguish requested settings from provider defaults and preserve usage when a provider returns no answer text.
+- Preserve numeric token budgets during secret redaction so foundation-model targets can be saved and run. Keep actual credential fields redacted.
+- Apply the runtime dependency constraints to Community Cloud installs and expose the app release in Settings for deployment verification.
 - Repair constraint, citation, escalation, uncertainty, reporting, and calibration provenance handling. Evaluator `deterministic-v6` addresses scoped exemptions, epistemic abstentions, and unverified citation support; these are regression fixes, not a general accuracy claim.
 - Add a non-root container with a health check and CI startup verification. Community Cloud hibernation remains a host limitation; hosting guidance documents the separate always-running requirement.
 

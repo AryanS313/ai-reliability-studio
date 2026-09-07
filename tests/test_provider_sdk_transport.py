@@ -6,10 +6,13 @@ import json
 import socket
 
 import httpx
+import pandas as pd
 import pytest
 
-from src import config, llm_client
+from src import config, database, llm_client
 from src.domain import ExecutionStatus
+from src.evaluator import run_evaluation
+from src.storage import SQLiteRepository
 from src.targets import FoundationModelConfig, FoundationModelTarget, SecretResolver
 
 
@@ -98,6 +101,8 @@ def gemini_payload(*, model="observed-gemini-version", refusal=False):
 PROVIDERS = [
     ("gpt-4o-mini", "api.openai.com", "/v1/chat/completions", openai_payload),
     ("claude-3-5-haiku-20241022", "api.anthropic.com", "/v1/messages", anthropic_payload),
+    ("claude-sonnet-5", "api.anthropic.com", "/v1/messages", anthropic_payload),
+    ("claude-haiku-4-5", "api.anthropic.com", "/v1/messages", anthropic_payload),
     (
         "gemini-2.0-flash",
         "generativelanguage.googleapis.com",
@@ -266,3 +271,211 @@ def test_invalid_empty_provider_response_still_preserves_reported_model(monkeypa
     assert result["model"] == "observed-openai-version"
     assert result["metadata"]["quality_score_eligible"] is False
     assert result["metadata"]["requested_model"] == "gpt-4o-mini"
+
+
+@pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
+def test_configured_sonnet_five_omits_sampling_and_reads_text_after_thinking(monkeypatch, temperature):
+    assert config.ANTHROPIC_MODEL_A == "claude-sonnet-5"
+
+    def provider(request):
+        body = json.loads(request.content)
+        # Model the documented rejection instead of accepting every request shape.
+        if any(parameter in body for parameter in ("temperature", "top_p", "top_k", "seed", "thinking")):
+            return httpx.Response(
+                400, json={"error": {"type": "invalid_request_error", "message": "Unsupported parameter"}}
+            )
+        payload = anthropic_payload(model="claude-sonnet-5")
+        payload["content"].insert(0, {"type": "thinking", "thinking": "", "signature": "offline-signature"})
+        return httpx.Response(200, json=payload)
+
+    requests, clients = mock_transport(monkeypatch, provider)
+    result = llm_client.generate_answer(
+        "Question",
+        "Context",
+        "System",
+        config.ANTHROPIC_MODEL_A,
+        api_key="visitor-fixture-key",
+        temperature=temperature,
+        seed=17,
+        max_tokens=2048,
+    )
+    assert result["status"] == ExecutionStatus.PASSED.value
+    assert result["answer"] == "Offline answer."
+    assert result["model"] == "claude-sonnet-5"
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["max_tokens"] == 2048
+    sampling = result["metadata"]["sampling"]
+    assert sampling["requested"] == {"temperature": temperature, "seed": 17}
+    assert sampling["request_parameters"] == {}
+    assert sampling["effective"] == {"temperature": None, "seed": None}
+    assert sampling["effective_basis"]["temperature"] == "provider_default_not_reported"
+    assert sampling["provider_reported"] is False
+    assert result["metadata"]["sampling_request_status"] == "provider_response_received"
+    assert "omitted" in result["metadata"]["temperature_warning"]
+    assert "omitted" in result["metadata"]["seed_warning"]
+    assert result["metadata"]["thinking_configuration"]["documented_default"] == "adaptive"
+    assert result["metadata"]["thinking_configuration"]["provider_reported"] is False
+    assert result["metadata"]["thinking_configuration"]["output_budget_scope"] == "thinking_and_response_text"
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-3-5-haiku-20241022"])
+def test_haiku_retains_supported_temperature_and_omits_unsupported_seed(monkeypatch, model):
+    requests, _ = mock_transport(monkeypatch, lambda request: httpx.Response(200, json=anthropic_payload()))
+    result = llm_client.generate_answer(
+        "Question",
+        "Context",
+        "System",
+        model,
+        api_key="visitor-fixture-key",
+        temperature=0.35,
+        seed=17,
+    )
+    assert result["status"] == ExecutionStatus.PASSED.value
+    body = json.loads(requests[0].content)
+    assert body["temperature"] == 0.35
+    assert "seed" not in body
+    sampling = result["metadata"]["sampling"]
+    assert sampling["requested"] == {"temperature": 0.35, "seed": 17}
+    assert sampling["request_parameters"] == {"temperature": 0.35}
+    assert sampling["effective"] == {"temperature": 0.35, "seed": None}
+    assert sampling["effective_basis"]["temperature"] == "request_parameter"
+    assert sampling["provider_reported"] is False
+    assert "temperature_warning" not in result["metadata"]
+    assert "thinking_configuration" not in result["metadata"]
+
+
+def test_failed_sonnet_request_keeps_sampling_provenance_without_claiming_observed_settings(monkeypatch):
+    requests, clients = mock_transport(
+        monkeypatch,
+        lambda request: httpx.Response(
+            500,
+            json={"error": {"type": "api_error", "message": "Offline failure"}},
+        ),
+    )
+    result = llm_client.generate_answer(
+        "Question",
+        "Context",
+        "System",
+        "claude-sonnet-5",
+        api_key="visitor-fixture-key",
+        seed=17,
+    )
+    assert result["status"] == ExecutionStatus.FAILED.value
+    assert result["model"] is None
+    assert result["metadata"]["sampling_request_status"] == "unconfirmed"
+    assert result["metadata"]["sampling"]["requested"] == {"temperature": 0.0, "seed": 17}
+    assert result["metadata"]["sampling"]["effective"]["temperature"] is None
+    assert result["metadata"]["sampling"]["provider_reported"] is False
+    assert "temperature" not in json.loads(requests[0].content)
+    assert len(requests) == 1 and clients[0].is_closed
+
+
+def test_sonnet_thinking_only_exhausted_budget_is_invalid_answer_with_provenance(monkeypatch):
+    payload = anthropic_payload(model="claude-sonnet-5")
+    payload["usage"] = {"input_tokens": 5, "output_tokens": 2048}
+    payload.update(
+        {
+            "content": [{"type": "thinking", "thinking": "", "signature": "offline-signature"}],
+            "stop_reason": "max_tokens",
+        }
+    )
+    mock_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+    result = llm_client.generate_answer(
+        "Question", "Context", "System", "claude-sonnet-5", api_key="visitor-fixture-key"
+    )
+    assert result["status"] == ExecutionStatus.INVALID_RESPONSE.value
+    assert result["error_code"] == "empty_provider_response"
+    assert result["model"] == "claude-sonnet-5"
+    assert result["metadata"]["provider_finish_reason"] == "max_tokens"
+    assert result["metadata"]["sampling"]["effective"]["temperature"] is None
+    assert result["metadata"]["quality_score_eligible"] is False
+    assert result["input_tokens"] == 5
+    assert result["output_tokens"] == 2048
+    assert result["latency_ms"] > 0
+
+
+def test_empty_haiku_answer_keeps_provider_usage_and_available_cost_estimate(monkeypatch):
+    payload = anthropic_payload(model="claude-haiku-4-5")
+    payload["content"] = []
+    mock_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+    result = llm_client.generate_answer(
+        "Question", "Context", "System", "claude-haiku-4-5", api_key="visitor-fixture-key"
+    )
+    assert result["status"] == ExecutionStatus.INVALID_RESPONSE.value
+    assert (result["input_tokens"], result["output_tokens"]) == (5, 3)
+    assert result["estimated_cost"] == config.estimate_cost_detail("claude-haiku-4-5", 5, 3)["cost"]
+
+
+@pytest.mark.parametrize(
+    "temperature,seed,max_tokens,custom_adapter", [(0.0, None, 2048, False), (0.7, 23, 4096, True)]
+)
+def test_sonnet_manifest_labels_requested_temperature_and_persists_effective_provenance(
+    monkeypatch,
+    tmp_path,
+    temperature,
+    seed,
+    max_tokens,
+    custom_adapter,
+):
+    repository = SQLiteRepository(tmp_path / "sampling.sqlite3")
+    context = repository.local_context()
+    payload = anthropic_payload(model="claude-sonnet-5")
+    mock_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+    dataset = pd.DataFrame(
+        [
+            {
+                "case_id": "sample",
+                "question": "What is the policy?",
+                "category": "Policy",
+                "expected_behavior": "answer",
+                "severity": "medium",
+                "tags": ["offline-fixture"],
+                "expected_answer": "Offline answer.",
+                "expected_source": "Policy",
+                "should_escalate": False,
+            }
+        ]
+    )
+    chunks = [{"chunk_id": "policy-1", "source_name": "Policy", "chunk_text": "Offline answer."}]
+    target = (
+        FoundationModelTarget(
+            FoundationModelConfig(
+                provider="anthropic",
+                model="claude-sonnet-5",
+                api_key_reference="secret://visitor",
+                temperature=temperature,
+                seed=seed,
+                max_tokens=max_tokens,
+            ),
+            SecretResolver({"visitor": "visitor-fixture-key"}),
+        )
+        if custom_adapter
+        else None
+    )
+    with database.request_scope(repository, context):
+        rows = run_evaluation(
+            dataset,
+            chunks,
+            {"Current": "Use the policy."},
+            "claude-sonnet-5",
+            1,
+            0.01,
+            3500,
+            0.03,
+            "sampling-fixture",
+            api_key="visitor-fixture-key",
+            max_concurrency=1,
+            target_adapter=target,
+        )
+    row = rows.iloc[0]
+    assert row["execution_status"] == "passed"
+    assert row["manifest"]["model"]["temperature"] == temperature
+    assert row["manifest"]["model"]["seed"] == seed
+    assert row["manifest"]["model"]["token_limit"] == max_tokens
+    assert row["manifest"]["model"]["sampling_setting_semantics"] == "requested"
+    assert row["manifest"]["model"]["effective_sampling_location"] == "per_execution_result.metadata.sampling"
+    assert row["metadata"]["sampling"]["effective"]["temperature"] is None
+    assert row["metadata"]["sampling"]["requested"] == {"temperature": temperature, "seed": seed}
+    stored_metadata = json.loads(repository.list_results(context)[0]["metadata_json"])
+    assert stored_metadata["sampling"] == row["metadata"]["sampling"]

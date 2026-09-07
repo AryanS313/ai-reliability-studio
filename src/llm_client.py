@@ -11,6 +11,50 @@ from src.domain import ExecutionStatus
 from src.targets import MockTargetConfig, SyntheticMockTarget
 
 PROVIDER_TIMEOUT_SECONDS = 30.0
+SONNET_5_CAPABILITY_SOURCE = "https://platform.claude.com/docs/en/models/sonnet-5/migration-guide"
+
+
+def _anthropic_sampling_configuration(model_name: str, temperature: float, seed: int | None) -> dict[str, Any]:
+    # Scope the exception to the documented model ID; older Haiku models still
+    # accept temperature. Do not infer capabilities for unknown future models.
+    uses_default_sampling = model_name == "claude-sonnet-5"
+    parameters = {} if uses_default_sampling else {"temperature": temperature}
+    metadata: dict[str, Any] = {
+        "sampling": {
+            "policy_version": "anthropic-sampling-v1",
+            "requested": {"temperature": temperature, "seed": seed},
+            "request_parameters": parameters,
+            "effective": {"temperature": None if uses_default_sampling else temperature, "seed": None},
+            "effective_basis": {
+                "temperature": "provider_default_not_reported" if uses_default_sampling else "request_parameter",
+                "seed": "unsupported",
+            },
+            "provider_reported": False,
+        },
+        "sampling_request_status": "unconfirmed",
+    }
+    if uses_default_sampling:
+        metadata["sampling"]["capability_source"] = SONNET_5_CAPABILITY_SOURCE
+        metadata["temperature_warning"] = (
+            f"Claude Sonnet 5 uses provider-default sampling; requested temperature {temperature} was omitted. "
+            "The effective numerical temperature is not reported by the provider."
+        )
+        metadata["thinking_configuration"] = {
+            "request_parameter": None,
+            "documented_default": "adaptive",
+            "default_source": SONNET_5_CAPABILITY_SOURCE,
+            "provider_reported": False,
+            "output_budget_scope": "thinking_and_response_text",
+        }
+        metadata["thinking_warning"] = (
+            "Claude Sonnet 5 defaults to adaptive thinking. The unchanged max_tokens limit covers thinking "
+            "and response text, so thinking can reduce the available answer budget."
+        )
+    if seed is not None:
+        metadata["seed_warning"] = (
+            "Provider does not expose a seed parameter for this request; requested seed was omitted."
+        )
+    return metadata
 
 
 def _http_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Client:
@@ -74,6 +118,9 @@ def generate_answer(
         }
 
     provider = config.provider_for_model(model_name)
+    request_metadata = (
+        _anthropic_sampling_configuration(model_name, temperature, seed) if provider == "anthropic" else {}
+    )
     effective_api_key = api_key or config.api_key_for_provider(provider)
     if not effective_api_key:
         return _failure(
@@ -83,6 +130,7 @@ def generate_answer(
             code="missing_api_key",
             message=f"No API key is configured for {provider}.",
             final_prompt=final_prompt,
+            request_metadata=request_metadata,
         )
     try:
         if provider == "gemini":
@@ -103,8 +151,12 @@ def generate_answer(
                 code="empty_provider_response",
                 message="The provider returned an empty response.",
                 final_prompt=final_prompt,
+                request_metadata=request_metadata,
             )
             failure["model"] = _observed_model(result.get("model"))
+            for measurement in ("latency_ms", "input_tokens", "output_tokens", "estimated_cost"):
+                if measurement in result:
+                    failure[measurement] = result[measurement]
             failure["metadata"].update(metadata)
             failure["metadata"]["quality_score_eligible"] = False
             return failure
@@ -118,6 +170,7 @@ def generate_answer(
             code=_safe_error_code(exc),
             message=_safe_provider_message(exc),
             final_prompt=final_prompt,
+            request_metadata=request_metadata,
         )
 
 
@@ -280,6 +333,7 @@ def _anthropic_answer(
 
     start = time.perf_counter()
     public = config.public_sessions_enabled()
+    sampling_metadata = _anthropic_sampling_configuration(model_name, temperature, seed)
     with (
         _http_client() as http_client,
         Anthropic(
@@ -294,8 +348,8 @@ def _anthropic_answer(
         response = client.messages.create(
             model=model_name,
             max_tokens=max_tokens,
-            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
+            **sampling_metadata["sampling"]["request_parameters"],
         )
     answer = "".join(
         str(getattr(block, "text", "")) for block in response.content if getattr(block, "type", "") == "text"
@@ -312,12 +366,10 @@ def _anthropic_answer(
         observed_model=getattr(response, "model", None),
     )
     result["metadata"]["provider_finish_reason"] = response.stop_reason
+    result["metadata"].update(sampling_metadata)
+    result["metadata"]["sampling_request_status"] = "provider_response_received"
     if response.stop_reason == "refusal":
         result["metadata"].update({"provider_safety_refusal": True, "provider_refusal_text": answer})
-    if seed is not None:
-        result.setdefault("metadata", {})["seed_warning"] = (
-            "Provider does not expose a seed parameter for this request."
-        )
     return result
 
 
@@ -366,6 +418,7 @@ def _failure(
     code: str,
     message: str,
     final_prompt: str,
+    request_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status.value,
@@ -380,6 +433,7 @@ def _failure(
         "safe_error": message,
         "final_prompt": final_prompt,
         "metadata": {
+            **(request_metadata or {}),
             "quality_score_eligible": False,
             "requested_model": model,
             "model_identity_provenance": "not_reported",

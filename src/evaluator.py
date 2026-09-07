@@ -239,9 +239,21 @@ def run_evaluation(
                     "configured_runner_model": selected_model,
                     "runner_controls_model": controls_model,
                     "observed_identity_location": "per_execution_result",
-                    "temperature": 0.0 if target_type == TargetType.FOUNDATION_MODEL.value else None,
-                    "seed": 17 if target_type == TargetType.SYNTHETIC.value else None,
-                    "token_limit": 2048 if target_type == TargetType.FOUNDATION_MODEL.value else None,
+                    "sampling_setting_semantics": "requested",
+                    "effective_sampling_location": "per_execution_result.metadata.sampling"
+                    if target_type == TargetType.FOUNDATION_MODEL.value and configured_provider == "anthropic"
+                    else None,
+                    "temperature": target_configuration.get("temperature", 0.0)
+                    if target_type == TargetType.FOUNDATION_MODEL.value
+                    else None,
+                    "seed": target_configuration.get("seed", 17)
+                    if target_type == TargetType.SYNTHETIC.value
+                    else target_configuration.get("seed")
+                    if target_type == TargetType.FOUNDATION_MODEL.value
+                    else None,
+                    "token_limit": target_configuration.get("max_tokens", 2048)
+                    if target_type == TargetType.FOUNDATION_MODEL.value
+                    else None,
                 },
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,

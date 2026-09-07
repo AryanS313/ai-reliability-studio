@@ -15,6 +15,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+APP_RELEASE = "2026.09.07.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"

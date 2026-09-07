@@ -2245,6 +2245,7 @@ def render_run_history() -> None:
 
 def render_settings_export() -> None:
     st.title("Settings / Export")
+    st.caption(f"App release {config.APP_RELEASE} · evaluator {EVALUATOR_VERSION}")
     st.subheader("Model provider and API key")
     st.caption(
         "In-app keys are stored only in Streamlit session state. They are not saved to SQLite and are not written to files."
@@ -2302,11 +2303,12 @@ def render_settings_export() -> None:
     )
     c3.metric("Model A", provider_models[0])
     st.metric("Model B", provider_models[1] if len(provider_models) > 1 else "Not configured")
-    storage_label = (
-        "PostgreSQL production storage"
-        if str(config.DATABASE_URL).lower().startswith(("postgresql://", "postgres://"))
-        else "Local SQLite development storage"
-    )
+    if public_session_mode():
+        storage_label = "Private temporary browser-session workspace"
+    elif str(config.DATABASE_URL).lower().startswith(("postgresql://", "postgres://")):
+        storage_label = "PostgreSQL production storage"
+    else:
+        storage_label = "Local SQLite development storage"
     st.metric("Storage mode", storage_label)
     st.caption("Local filesystem and connection locations are intentionally hidden from the user interface.")
     if st.session_state.get("public_session_notice"):
