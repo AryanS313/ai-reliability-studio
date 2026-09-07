@@ -1,0 +1,8 @@
+/cache/
+/upstream-metadata/
+/build-*/
+/final-build-*/
+/*.zip
+/*.log
+/__pycache__/
+/.ruff_cache/

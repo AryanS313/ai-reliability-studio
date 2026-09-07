@@ -449,11 +449,22 @@ def audited_export(format_name, payload, run_id) -> None:
     database.record_export(format_name, payload, run_id)
 
 
+def reset_workspace_data() -> None:
+    # Widget callbacks run before init_state, so rebind this visitor first.
+    bind_current_session()
+    database.reset_current_workspace(confirm=True)
+    # Clear saved reviews, uploads, and keys before new widgets render. Public
+    # sessions also delete their private DB; authenticated storage keeps its audit.
+    end_public_session(st.session_state)
+
+
 def init_state() -> None:
     session = bind_current_session()
     database.init_db()
     authenticated_context = session.context
     st.session_state.public_session_notice = session.notice if session.ephemeral else ""
+    # Explicitly synchronize the mounted navigation widget after a cleared session.
+    st.session_state.setdefault("page", "Overview")
     prompts = default_prompts()
     st.session_state.setdefault("mode", "Demo Mode")
     st.session_state.setdefault("openai_api_key", "")
@@ -576,6 +587,8 @@ def public_session_mode() -> bool:
 
 
 def external_connections_available() -> bool:
+    if config.browser_runtime_enabled():
+        return False
     return not public_session_mode() or bool(config.EXTERNAL_TARGET_ALLOWED_HOSTS)
 
 
@@ -1750,7 +1763,11 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
         )
         c1, c2 = st.columns(2)
-        max_concurrency = c1.slider("Concurrency", 1, 16, 4)
+        if config.browser_runtime_enabled():
+            max_concurrency = 1
+            c1.caption("Browser runs process one answer at a time.")
+        else:
+            max_concurrency = c1.slider("Concurrency", 1, 16, 4)
         max_retries = c2.slider("Retryable-error retries", 0, 5, 2)
         candidate_tuned_on_dataset = st.checkbox(
             "A candidate in this run was tuned using cases from this dataset",
@@ -1796,7 +1813,7 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
         if model == "mock-model" and mock_scenario != "__per_case__":
             evaluation_frame["mock_scenario"] = mock_scenario
         try:
-            with st.spinner("Running reliability evaluation with checkpoints and explicit error states..."):
+            with st.spinner("Running reliability evaluation and recording each outcome..."):
                 results = run_evaluation(
                     eval_df=evaluation_frame,
                     chunks=st.session_state.chunks,
@@ -2246,6 +2263,8 @@ def render_run_history() -> None:
 def render_settings_export() -> None:
     st.title("Settings / Export")
     st.caption(f"App release {config.APP_RELEASE} · evaluator {EVALUATOR_VERSION}")
+    if config.browser_runtime_enabled():
+        st.caption("Browser edition · work stays in this tab until you download it.")
     st.subheader("Model provider and API key")
     st.caption(
         "In-app keys are stored only in Streamlit session state. They are not saved to SQLite and are not written to files."
@@ -2363,12 +2382,11 @@ def render_settings_export() -> None:
         database.clear_results(confirm=True)
         st.session_state.last_results = pd.DataFrame()
         st.success("Evaluation results for the active workspace were deleted. Other workspaces were not touched.")
-    if c2.button("Reset all data in this workspace", disabled=confirmation != "DELETE WORKSPACE DATA"):
-        database.reset_current_workspace(confirm=True)
-        start_custom_mode()
-        st.success(
-            "Active workspace data was deleted. The operation is recorded in the audit log and does not affect other workspaces."
-        )
+    c2.button(
+        "Reset all data in this workspace",
+        disabled=confirmation != "DELETE WORKSPACE DATA",
+        on_click=reset_workspace_data,
+    )
 
 
 def main() -> None:
