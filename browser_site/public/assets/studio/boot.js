@@ -53,7 +53,15 @@ window.Worker=class extends OriginalWorker{
   }
 };
 const observer=new MutationObserver(()=>{
-  if([...root.querySelectorAll('button')].some(button=>button.textContent.includes('Try sample'))){ready=true;panel.hidden=true;root.hidden=false;observer.disconnect();}
+  for(const [selector,label] of [
+    ['[data-testid="stSidebarCollapsedControl"] button','Open menu'],
+    ['[data-testid="stSidebarCollapseButton"] button','Close menu'],
+  ]){
+    for(const button of root.querySelectorAll(selector)){
+      if(button.getAttribute('aria-label')!==label)button.setAttribute('aria-label',label);
+    }
+  }
+  if(!ready && [...root.querySelectorAll('button')].some(button=>button.textContent.includes('Try sample'))){ready=true;panel.hidden=true;root.hidden=false;}
 });
 observer.observe(root,{childList:true,subtree:true});
 const url=path=>new URL(base+path,location.origin).href;

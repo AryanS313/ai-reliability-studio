@@ -90,6 +90,21 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] * {
             color: var(--ars-text);
         }
+        [data-testid="stSidebarHeader"] {
+            position: sticky;
+            top: 0;
+            z-index: 3;
+            background: #f7f8fb;
+        }
+        [data-testid="stSidebarCollapseButton"] {
+            width: auto;
+        }
+        [data-testid="stSidebarCollapseButton"] button::after {
+            content: "Close menu";
+            white-space: nowrap;
+            font-size: .875rem;
+            margin-right: .25rem;
+        }
         header,
         .stAppHeader,
         .stAppToolbar,
@@ -547,7 +562,7 @@ def api_key_source() -> str:
 
 
 def api_key_status_label() -> str:
-    return "Available" if effective_api_key() else "Not available"
+    return "Present · unverified" if effective_api_key() else "Not entered"
 
 
 def model_options() -> list[str]:
@@ -556,6 +571,13 @@ def model_options() -> list[str]:
 
 def selected_provider() -> str:
     return PROVIDER_LABELS.get(st.session_state.get("api_provider", "OpenAI"), "openai")
+
+
+def clear_in_app_provider_key(provider: str) -> None:
+    keys = dict(st.session_state.get("provider_api_keys", {}))
+    keys[provider] = ""
+    st.session_state.provider_api_keys = keys
+    st.session_state[f"_provider_key_input_{provider}"] = ""
 
 
 def streamlit_secret_api_key(provider: str | None = None) -> str:
@@ -781,7 +803,9 @@ def render_overview() -> None:
             navigate_to("Review saved answers", "FinSure demo loaded. Three fictional answers are ready to review.")
     with c2, st.container(border=True):
         st.subheader("Use answers you have")
-        st.write("Upload questions, source documents and saved answers. No assistant connection required.")
+        st.write(
+            "Upload questions with expected answers, source documents and saved assistant responses. No connection needed."
+        )
         if st.button("Review saved answers", use_container_width=True, key="start_saved"):
             navigate_to("Review saved answers")
     with c3, st.container(border=True):
@@ -1734,8 +1758,9 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             ready = False
         else:
             model = st.selectbox("Exact model identifier", direct_models)
-            st.success(
-                f"Direct {st.session_state.api_provider} execution via {api_key_source()}. Provider failures remain failures."
+            st.info(
+                f"Configured to request {st.session_state.api_provider} using {api_key_source()}. "
+                "The key and model access have not been verified. Requests run only after you authorize them below."
             )
     else:
         model = "external-assistant"
@@ -1763,10 +1788,15 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             0.01,
         )
         latency_threshold = c3.number_input(
-            "Latency gate (ms)", min_value=100, value=config.LATENCY_THRESHOLD_MS, step=100
+            "Per-answer latency check (ms)", min_value=100, value=config.LATENCY_THRESHOLD_MS, step=100
         )
         cost_threshold = c4.number_input(
-            "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
+            "Per-answer cost check (USD)",
+            min_value=0.0,
+            value=config.COST_THRESHOLD_USD,
+            step=0.005,
+            format="%.3f",
+            help="Flags estimated answer costs after a request. This is not a limit on provider charges.",
         )
         c1, c2 = st.columns(2)
         if sys.platform == "emscripten":
@@ -1787,8 +1817,12 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
     calls = len(st.session_state.eval_df) * len(prompts)
     st.info(
         f"Preflight: {st.session_state.eval_df['case_id'].nunique() if 'case_id' in st.session_state.eval_df else len(st.session_state.eval_df)} "
-        f"unique cases · {calls} total executions · {len(prompts)} candidate(s). "
-        f"Provider cost is {'$0 synthetic' if model == 'mock-model' else 'unknown until exact token usage is returned'}."
+        f"unique cases · {calls} planned evaluations · {len(prompts)} candidate(s). "
+        f"Provider cost: {'$0 (synthetic)' if model == 'mock-model' else 'unknown; no spending cap is enforced'}."
+    )
+    st.caption(
+        f"Up to {max_concurrency} evaluations at once · up to {max_retries} retries per evaluation. "
+        "Retries may add requests; cached answers may avoid them. Cost and latency checks label results after requests."
     )
     run_dataset_quality = dataset_quality_report(
         st.session_state.eval_df,
@@ -2275,11 +2309,8 @@ def render_settings_export() -> None:
     st.caption(
         "In-app keys are stored only in Streamlit session state. They are not saved to SQLite and are not written to files."
     )
-    provider_label = st.selectbox(
-        "Provider",
-        list(PROVIDER_LABELS),
-        index=list(PROVIDER_LABELS).index(st.session_state.get("api_provider", "OpenAI")),
-    )
+    st.session_state.setdefault("_settings_provider", st.session_state.get("api_provider", "OpenAI"))
+    provider_label = st.selectbox("Provider", list(PROVIDER_LABELS), key="_settings_provider")
     st.session_state.api_provider = provider_label
     provider = selected_provider()
     secret_name = PROVIDER_SECRET_NAMES[provider]
@@ -2289,9 +2320,11 @@ def render_settings_export() -> None:
         else f"Key priority: in-app key > Streamlit secrets > .env {secret_name}. Missing credentials produce an explicit error; synthetic mode must be selected separately."
     )
     keys = dict(st.session_state.get("provider_api_keys", {}))
+    input_key = f"_provider_key_input_{provider}"
+    st.session_state.setdefault(input_key, keys.get(provider, ""))
     entered_key = st.text_input(
         f"{provider_label} API key",
-        value=keys.get(provider, ""),
+        key=input_key,
         type="password",
         placeholder="Paste the provider API key",
         help="This key is used only when you authorize a provider call. It stays in this browser session."
@@ -2301,15 +2334,13 @@ def render_settings_export() -> None:
     keys[provider] = entered_key.strip()
     st.session_state.provider_api_keys = keys
     c1, c2, c3 = st.columns(3)
-    c1.metric("Effective API key", api_key_status_label())
+    c1.metric("API key", api_key_status_label())
     c2.metric("Key source", api_key_source())
-    c3.metric("Real LLM Mode", "Available" if effective_api_key() else "Unavailable")
+    c3.metric("Provider access", "Not verified" if effective_api_key() else "Key required")
+    if effective_api_key():
+        st.caption("Entering a key does not verify it or confirm model access. No test request is sent automatically.")
     if keys.get(provider):
-        if st.button("Clear in-app API key"):
-            keys[provider] = ""
-            st.session_state.provider_api_keys = keys
-            st.success("In-app API key cleared from this session.")
-            st.rerun()
+        st.button("Clear in-app API key", on_click=clear_in_app_provider_key, args=(provider,))
     if not effective_api_key():
         st.info(
             "Direct foundation-model execution is unavailable until a key is configured. "

@@ -69,7 +69,7 @@ Choose one of these paths in **Target Setup**:
 1. **Foundation model** — select a configured OpenAI, Google Gemini, or Anthropic model and supply your key. Public sessions use only keys entered in that session; they never fall back to owner credentials. Trusted local/authenticated deployments can also use configured server keys.
 2. **External API** — import a versioned configuration such as [`examples/external_target.json`](examples/external_target.json). Secret values must use `secret://NAME` references; raw credentials are rejected from persisted configuration. Public deployments restrict destinations to administrator-approved HTTPS hosts and reject internal network addresses.
 
-The preflight summary shows the exact candidate count, unique cases, total external calls, concurrency, retry policy, and estimated cost where pricing is known. Real calls require explicit confirmation.
+The preflight summary shows candidate and case counts, planned evaluations, concurrency and retry policy. Retries may add requests and cached answers may avoid them. Real-provider cost is reported as unknown before execution; cost checks classify results after requests and do not cap spending. Real calls require explicit confirmation.
 
 There is no provider-to-mock fallback. If a key or endpoint is unavailable, the execution is recorded as an error and is not scored.
 

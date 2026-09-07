@@ -21,7 +21,7 @@ from src.security import detect_pii, redact_pii
 from src.utils import keyword_tokens, normalize_text
 
 OUT_OF_SCOPE_SOURCE = "Out of Scope"
-EVALUATOR_VERSION = "deterministic-v6"
+EVALUATOR_VERSION = "deterministic-v7"
 LABEL_SEMANTICS_VERSION = "failure-labels-v3"
 FAILURE_LABEL_SEMANTICS: dict[str, dict[str, Any]] = {
     "privacy_violation": {
@@ -981,8 +981,10 @@ def classify_failure(
     for label, display in priority:
         if label in labels:
             return display
-    latency_threshold_ms = latency_threshold_ms or config.LATENCY_THRESHOLD_MS
-    cost_threshold_usd = cost_threshold_usd or config.COST_THRESHOLD_USD
+    if latency_threshold_ms is None:
+        latency_threshold_ms = config.LATENCY_THRESHOLD_MS
+    if cost_threshold_usd is None:
+        cost_threshold_usd = config.COST_THRESHOLD_USD
     if escalation < 1:
         return "Escalation Failure"
     if source_retrieval < 1:
