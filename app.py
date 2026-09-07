@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -587,7 +588,9 @@ def public_session_mode() -> bool:
 
 
 def external_connections_available() -> bool:
-    if config.browser_runtime_enabled():
+    # Streamlit can rerun this file while an older config module is cached.
+    # The interpreter platform is authoritative and independent of that cache.
+    if sys.platform == "emscripten":
         return False
     return not public_session_mode() or bool(config.EXTERNAL_TARGET_ALLOWED_HOSTS)
 
@@ -1766,7 +1769,7 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
         )
         c1, c2 = st.columns(2)
-        if config.browser_runtime_enabled():
+        if sys.platform == "emscripten":
             max_concurrency = 1
             c1.caption("Browser runs process one answer at a time.")
         else:
@@ -2266,7 +2269,7 @@ def render_run_history() -> None:
 def render_settings_export() -> None:
     st.title("Settings / Export")
     st.caption(f"App release {config.APP_RELEASE} · evaluator {EVALUATOR_VERSION}")
-    if config.browser_runtime_enabled():
+    if sys.platform == "emscripten":
         st.caption("Browser edition · work stays in this tab until you download it.")
     st.subheader("Model provider and API key")
     st.caption(

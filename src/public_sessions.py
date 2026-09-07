@@ -9,6 +9,7 @@ garbage collection, or server restart. This module never opens the configured DB
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections.abc import MutableMapping
@@ -160,7 +161,7 @@ def initialize_session(
         f"It expires after {hours:g} hours of inactivity or a server restart. "
         "Export your work before leaving. Provider keys must be supplied in this session."
     )
-    if config.browser_runtime_enabled():
+    if sys.platform == "emscripten":
         notice = (
             "Your workspace stays in this tab's memory. Closing or reloading the tab clears it, "
             f"as does returning after {hours:g} hours of inactivity. "

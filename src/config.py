@@ -16,7 +16,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_RELEASE = "2026.09.07.4"
+APP_RELEASE = "2026.09.07.5"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -168,7 +168,7 @@ def public_sessions_enabled() -> bool:
 
 
 def browser_runtime_enabled() -> bool:
-    """Browser Python is isolated from every native server configuration."""
+    """Compatibility for older modules retained during a Streamlit source update."""
     return sys.platform == "emscripten"
 
 
