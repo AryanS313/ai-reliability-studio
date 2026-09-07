@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from src import config
+from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION
 from src.security import validate_upload
 from src.versioning import version_hash
 
@@ -88,6 +89,8 @@ def calibrate_evaluators(
     labels: tuple[str, ...] | list[str] | None = None,
     requirements: CalibrationRequirements | None = None,
     thresholds: EvaluatorThresholdConfiguration | None = None,
+    evaluator_version: str | None = None,
+    label_semantics_version: str | None = None,
 ) -> dict[str, Any]:
     """Compare automatic and human labels on a held-out labelled dataset.
 
@@ -165,9 +168,12 @@ def calibrate_evaluators(
             "sample_sufficient": sample_sufficient,
             "requirements_met": thresholds_met,
         }
+    version_bound = bool(evaluator_version and label_semantics_version)
+    if not version_bound:
+        limitations.append("Automatic labels lack an explicitly declared evaluator and label-semantics version.")
     status = (
         "calibrated"
-        if metrics and all(item["requirements_met"] for item in metrics.values())
+        if version_bound and metrics and all(item["requirements_met"] for item in metrics.values())
         else "insufficiently_calibrated"
     )
     payload: dict[str, Any] = {
@@ -176,6 +182,9 @@ def calibrate_evaluators(
         "excluded_non_holdout_cases": len(reviewed) - len(held_out),
         "held_out_splits": sorted(set(held_out["split"].astype(str).str.lower())),
         "threshold_version": thresholds.version,
+        "evaluator_version": evaluator_version,
+        "label_semantics_version": label_semantics_version,
+        "reviewed_dataset_hash": version_hash(held_out.to_dict(orient="records")),
         "threshold_configuration": asdict(thresholds),
         "requirements": asdict(requirements),
         "evaluators": metrics,
@@ -192,11 +201,38 @@ def uncalibrated_status(thresholds: EvaluatorThresholdConfiguration | None = Non
         "status": "insufficiently_calibrated",
         "reviewed_cases": 0,
         "threshold_version": thresholds.version,
+        "evaluator_version": EVALUATOR_VERSION,
+        "label_semantics_version": LABEL_SEMANTICS_VERSION,
         "limitations": ["No held-out human-labelled calibration result was attached to this run."],
         "statistical_claim": "No statistical confidence claim is available.",
     }
     payload["calibration_version"] = version_hash(payload)
     return payload
+
+
+def validate_calibration_for_run(
+    result: dict[str, Any],
+    thresholds: EvaluatorThresholdConfiguration,
+    *,
+    evaluator_version: str,
+    label_semantics_version: str,
+) -> None:
+    """Reject stale or changed qualifying evidence before executing a target.
+
+    The content hash binds the result, including its evaluator and label versions.
+    It is an integrity check, not authentication of the reviewer or their labels.
+    """
+    if result.get("threshold_version") != thresholds.version:
+        raise ValueError("Calibration result threshold version does not match this run's threshold configuration.")
+    if result.get("status") != "calibrated":
+        return
+    if result.get("evaluator_version") != evaluator_version:
+        raise ValueError("Calibration result evaluator version is missing or does not match this run's evaluator.")
+    if result.get("label_semantics_version") != label_semantics_version:
+        raise ValueError("Calibration result label-semantics version is missing or does not match this run.")
+    content = {key: value for key, value in result.items() if key not in {"calibration_version", "calibration_id"}}
+    if not result.get("calibration_version") or version_hash(content) != result["calibration_version"]:
+        raise ValueError("Calibration result content hash is missing or does not match its version-bound evidence.")
 
 
 def run_calibration_workflow(
@@ -205,6 +241,7 @@ def run_calibration_workflow(
     reviewed: pd.DataFrame,
     *,
     evaluator_version: str,
+    label_semantics_version: str = LABEL_SEMANTICS_VERSION,
     labels: tuple[str, ...] | list[str] | None = None,
     requirements: CalibrationRequirements | None = None,
     thresholds: EvaluatorThresholdConfiguration | None = None,
@@ -217,6 +254,8 @@ def run_calibration_workflow(
         labels=labels,
         requirements=requirements,
         thresholds=thresholds,
+        evaluator_version=evaluator_version,
+        label_semantics_version=label_semantics_version,
     )
     records = reviewed.where(pd.notna(reviewed), None).to_dict(orient="records")
     for record in records:

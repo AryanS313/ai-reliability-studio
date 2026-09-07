@@ -83,3 +83,39 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
       - run: pytest -m postgres tests/test_postgres_integration.py --no-cov -q
+
+  container-smoke:
+    name: Public container startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the exact runtime image
+        run: docker build -t studio-public-ci .
+      - name: Verify a non-root healthy web process
+        shell: bash
+        run: |
+          docker run --detach --name studio-public-ci -p 127.0.0.1:8501:8501 studio-public-ci
+          trap 'docker logs studio-public-ci; docker rm --force studio-public-ci' EXIT
+          test "$(docker exec studio-public-ci id -u)" = "10001"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Exercise the sample in the runtime image
+        run: |
+          docker run --rm --memory=512m --network=none -i studio-public-ci python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+          app = AppTest.from_file("app.py").run(timeout=60)
+          assert not app.exception, app.exception
+          app.button(key="start_sample").click().run(timeout=60)
+          assert not app.exception, app.exception
+          results = app.session_state["offline_baseline"]
+          assert len(results) == 3
+          assert results["review_status"].eq("pending").all()
+          assert len(app.get("download_button")) == 4
+          app.session_state["_studio_private_session"].close()
+          PY

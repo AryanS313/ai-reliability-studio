@@ -102,6 +102,19 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
     if df.empty:
         return {"verdict": "Insufficient Evidence", "gate_results": [], "counts": _counts(df)}
     counts = _counts(df)
+    if "target_type" in df and bool((df["target_type"] == TargetType.SAVED_RESPONSES.value).any()):
+        return {
+            "verdict": "Offline response review — no launch verdict",
+            "evidence_notice": (
+                "Imported responses support a bounded review against supplied sources. "
+                "They do not independently establish live execution, client retrieval, or launch readiness."
+            ),
+            "gate_results": [
+                _gate("live_execution_not_verified", False, "Saved responses are reviewed evidence, not a live test.")
+            ],
+            "counts": counts,
+            "launch_blocked": True,
+        }
     synthetic = "target_type" in df and bool((df["target_type"] == TargetType.SYNTHETIC.value).any())
     if synthetic:
         return {
@@ -133,16 +146,16 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
     unsupported_rate = _failure_label_rate(quality, "unsupported_claim")
     critical_failures = _critical_failure_count(quality, gates.critical_labels)
     execution_error_rate = counts["execution_error_count"] / max(1, counts["total_executions"])
-    latency_p95 = _percentile(quality.get("latency_ms", pd.Series(dtype=float)), 0.95)
-    cost_series = (
-        quality["estimated_cost"]
-        if "estimated_cost" in quality
-        else pd.Series([0.0] * len(quality), index=quality.index)
-    )
-    total_cost = float(pd.to_numeric(cost_series, errors="coerce").fillna(0).sum())
+    latencies = _measurements(quality, "latency_ms")
+    costs = _measurements(df, "estimated_cost")
+    latency_p95 = _percentile(latencies, 0.95) if latencies.notna().all() else None
+    total_cost = float(costs.sum()) if costs.notna().all() else None
     categories = set(str(value) for value in quality.get("category", pd.Series(dtype=str)).dropna())
     calibration_values = set(
-        str(value) for value in quality.get("calibration_status", pd.Series(["not_recorded"] * len(quality))).dropna()
+        str(value)
+        for value in quality.get("calibration_status", pd.Series(["not_recorded"] * len(quality))).fillna(
+            "not_recorded"
+        )
     )
     calibration_status = "calibrated" if calibration_values == {"calibrated"} else "insufficiently_calibrated"
     dataset_eligible = bool(
@@ -173,6 +186,16 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
         ),
         _threshold_gate("minimum_sample_size", counts["unique_test_cases"], gates.minimum_sample_size, minimum=True),
     ]
+    if "determination_state" in quality or _failure_label_rate(quality, "evaluator_uncertain") > 0:
+        states = quality.get("determination_state", pd.Series(index=quality.index, dtype=object))
+        unresolved = int(states.fillna("unable_to_determine").ne("determined").sum())
+        gate_results.append(
+            _gate(
+                "evaluator_determinations_complete",
+                unresolved == 0 and _failure_label_rate(quality, "evaluator_uncertain") == 0,
+                f"{unresolved} quality executions have unresolved or missing determinations; scores alone cannot resolve them.",
+            )
+        )
     if gates.require_calibration:
         gate_results.append(
             _gate(
@@ -220,6 +243,7 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
             "required_category_coverage",
             "minimum_evaluator_calibration",
             "dataset_launch_eligibility",
+            "evaluator_determinations_complete",
         }
         for gate in failed
     )
@@ -250,6 +274,9 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
             "execution_error_rate": execution_error_rate,
             "latency_p95_ms": latency_p95,
             "total_cost_usd": total_cost,
+            "known_cost_subtotal_usd": float(costs.sum()) if costs.notna().any() else None,
+            "cost_measurement_count": int(costs.notna().sum()),
+            "latency_measurement_count": int(latencies.notna().sum()),
             "calibration_status": calibration_status,
             "dataset_launch_eligible": dataset_eligible,
         },
@@ -485,13 +512,22 @@ def _infrastructure_summary(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _cost_latency_summary(df: pd.DataFrame) -> dict[str, float]:
-    costs = pd.to_numeric(df.get("estimated_cost", pd.Series(dtype=float)), errors="coerce").dropna()
-    latencies = pd.to_numeric(df.get("latency_ms", pd.Series(dtype=float)), errors="coerce").dropna()
+def _measurements(df: pd.DataFrame, column: str) -> pd.Series:
+    values = pd.to_numeric(df.get(column, pd.Series(float("nan"), index=df.index)), errors="coerce")
+    return values.where(values.apply(lambda value: math.isfinite(value) and value >= 0))
+
+
+def _cost_latency_summary(df: pd.DataFrame) -> dict[str, Any]:
+    costs = _measurements(df, "estimated_cost")
+    latencies = _measurements(df, "latency_ms")
     return {
-        "known_cost_usd": round(float(costs.sum()), 8),
-        "average_latency_ms": round(float(latencies.mean()), 3) if not latencies.empty else 0.0,
-        "p95_latency_ms": round(_percentile(latencies, 0.95), 3),
+        "known_cost_usd": round(float(costs.sum()), 8) if costs.notna().any() else None,
+        "average_latency_ms": round(float(latencies.mean()), 3) if latencies.notna().any() else None,
+        "p95_latency_ms": round(_percentile(latencies, 0.95), 3) if latencies.notna().any() else None,
+        "measurement_scope": "Known observations only; missing values are not zero.",
+        "cost_measurement_count": int(costs.notna().sum()),
+        "latency_measurement_count": int(latencies.notna().sum()),
+        "case_count": len(df),
     }
 
 
@@ -554,7 +590,15 @@ def _gate(name: str, passed: bool, explanation: str) -> dict[str, Any]:
     return {"name": name, "passed": bool(passed), "explanation": explanation}
 
 
-def _threshold_gate(name: str, actual: float, threshold: float, *, minimum: bool) -> dict[str, Any]:
+def _threshold_gate(name: str, actual: float | None, threshold: float, *, minimum: bool) -> dict[str, Any]:
+    if actual is None or not math.isfinite(actual):
+        return {
+            "name": name,
+            "passed": False,
+            "actual": None,
+            "threshold": threshold,
+            "explanation": "Complete valid measurements are unavailable; this threshold cannot be verified.",
+        }
     passed = actual >= threshold if minimum else actual <= threshold
     operator = ">=" if minimum else "<="
     return {

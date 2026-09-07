@@ -2,12 +2,16 @@
 
 New services should depend on `src.storage.Repository` directly. This module keeps
 the original Streamlit/function API while ensuring every operation is scoped to
-the explicit local development workspace.
+the repository and workspace bound to the current execution context.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,44 +20,121 @@ import pandas as pd
 from src import config
 from src.domain import WorkspaceContext
 from src.migrations import migrate_sqlite
-from src.storage import repository_from_url
+from src.storage import Repository, SQLiteRepository, repository_from_url
 from src.versioning import version_hash
 
-_repository = None
-_active_context: WorkspaceContext | None = None
+
+@dataclass(frozen=True)
+class RequestBinding:
+    repository: Repository
+    context: WorkspaceContext
+    auth_mode: str
+    app_env: str
+
+
+_repository: ContextVar[Any] = ContextVar("studio_repository", default=None)
+_request: ContextVar[RequestBinding | None] = ContextVar("studio_request", default=None)
 
 
 def get_repository():
-    global _repository
-    if _repository is None:
-        _repository = repository_from_url()
-    return _repository
+    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
+        from src.auth import authenticate_request
+
+        clear_request()
+        authenticate_request()
+    binding = _valid_binding()
+    if binding is not None:
+        return binding.repository
+    if config.public_sessions_enabled():
+        from src.auth import AuthenticationError
+
+        raise AuthenticationError("Initialize a private public session before accessing storage.")
+    repository = _repository.get()
+    if repository is None:
+        repository = repository_from_url()
+        _repository.set(repository)
+    return repository
 
 
 def set_repository(repository) -> None:
-    global _active_context, _repository
-    _repository = repository
-    _active_context = None
+    """Override storage in this execution context only (CLI and direct tests)."""
+    _repository.set(repository)
+    _request.set(None)
+
+
+def clear_request() -> None:
+    """End the current request; never retain a prior visitor's identity."""
+    _request.set(None)
+
+
+def _valid_binding() -> RequestBinding | None:
+    binding = _request.get()
+    if binding is not None and (binding.auth_mode, binding.app_env) != (config.AUTH_MODE, config.APP_ENV):
+        clear_request()
+        return None
+    return binding
+
+
+def bind_context(repository: Repository, context: WorkspaceContext) -> RequestBinding:
+    """Bind an already authorized repository/context pair to the current request.
+
+    Callers must obtain the pair from authentication or a private public session.
+    Workers must receive that pair explicitly and use request_scope; a new thread
+    intentionally inherits neither the previous request nor its database.
+    """
+    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
+        from src.auth import authenticate_request
+
+        authenticate_request()
+    repository.authorize(context)
+    binding = RequestBinding(repository, context, config.AUTH_MODE, config.APP_ENV)
+    _request.set(binding)
+    return binding
+
+
+@contextmanager
+def request_scope(repository: Repository, context: WorkspaceContext) -> Iterator[RequestBinding]:
+    """Explicit, nesting-safe binding for a worker or request with a known identity."""
+    previous = _request.set(None)
+    try:
+        yield bind_context(repository, context)
+    finally:
+        _request.reset(previous)
 
 
 def current_context(headers: dict[str, Any] | None = None) -> WorkspaceContext:
-    global _active_context
-    if headers is None and _active_context is not None:
-        return _active_context
-    repository = get_repository()
-    if config.AUTH_MODE == "single-user":
-        context = repository.local_context()
-        _active_context = context
-        return context
-    from src.auth import authenticate_request, workspace_context
+    from src.auth import AuthenticationError, authenticate_request, workspace_context
 
-    context = workspace_context(repository, authenticate_request(headers), None)
-    _active_context = context
+    # Check this even for an existing binding; production must never inherit the
+    # permissive development single-user path.
+    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
+        clear_request()
+        authenticate_request(headers)
+    binding = _valid_binding()
+    if config.public_sessions_enabled():
+        if binding is None:
+            raise AuthenticationError("Initialize a private public session before accessing storage.")
+        return binding.context
+    if headers is None and binding is not None:
+        return binding.context
+    clear_request()
+    identity = authenticate_request(headers)
+    repository = get_repository()
+    context = workspace_context(repository, identity, None)
+    bind_context(repository, context)
     return context
 
 
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
-    path = Path(db_path or config.DATABASE_PATH)
+    if config.public_sessions_enabled():
+        repository = get_repository()
+        if not isinstance(repository, SQLiteRepository):
+            raise RuntimeError("Public sessions require private SQLite storage.")
+        if db_path is not None and Path(db_path).resolve() != repository.path.resolve():
+            raise PermissionError("Public sessions cannot connect to another database.")
+        path = repository.path
+    else:
+        path = Path(db_path or config.DATABASE_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row

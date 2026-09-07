@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+# Public-session defaults must be set before application configuration is imported.
 import html
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+os.environ.setdefault("AUTH_MODE", "public-session")
 
 from src import charts, config, database
 from src.aggregation import compare_candidates, evaluate_candidates
@@ -22,6 +27,7 @@ from src.datasets import coverage_analysis, dataset_quality_report, validate_dat
 from src.document_loader import UPLOAD_TYPES, detect_duplicate_documents, load_uploaded_document
 from src.evaluator import EVALUATION_UPLOAD_TYPES, normalize_eval_dataset, read_eval_dataset, run_evaluation
 from src.presentation import execution_summary, failure_presentation, safe_display_text, safe_nested
+from src.public_sessions import end_public_session, initialize_session
 from src.reporting import csv_report, html_report, json_report
 from src.sample_data import (
     default_prompts,
@@ -29,10 +35,26 @@ from src.sample_data import (
     load_sample_eval_dataset,
     sample_project_metadata,
 )
+from src.saved_responses import compare_response_reviews, read_response_file
 from src.scoring import EVALUATOR_VERSION
 from src.security import privacy_notice, validate_upload_batch
 from src.suggestions import generate_improved_prompt, prompt_change_proposal
 from src.targets import ExternalHTTPTarget, ExternalTargetConfig, SecretResolver
+from src.ui_workflows import (
+    REVIEW_LABELS,
+    evaluate_review_workspace,
+    new_review_workspace,
+    optional_review_text,
+    read_reference_json,
+    read_reference_uploads,
+    read_review_workspace,
+    replacement_batch,
+    sample_replacements,
+    sample_review_workspace,
+    save_case_review,
+    starter_pack,
+    utc_now_text,
+)
 from src.vector_store import SimpleVectorStore
 
 st.set_page_config(page_title="AI Reliability Studio", page_icon="ARS", layout="wide")
@@ -59,7 +81,7 @@ def apply_theme() -> None:
             background: var(--ars-page);
             color: var(--ars-text);
         }
-        .block-container {padding-top: 1.3rem; padding-bottom: 2rem; max-width: 1440px;}
+        .block-container {padding-top: 4.5rem; padding-bottom: 2rem; max-width: 1440px;}
         [data-testid="stSidebar"] {
             background: #f7f8fb;
             color: var(--ars-text);
@@ -74,13 +96,14 @@ def apply_theme() -> None:
         .stAppToolbar *,
         .stAppDeployButton,
         .stAppDeployButton * {
-            color: #f8fafc !important;
+            color: var(--ars-text) !important;
         }
+        header, .stAppHeader {background: var(--ars-page) !important;}
         .stAppHeader button,
         .stAppToolbar button,
         .stAppDeployButton button {
-            color: #f8fafc !important;
-            border-color: rgba(248, 250, 252, .35) !important;
+            color: var(--ars-text) !important;
+            border-color: var(--ars-border) !important;
         }
         .stMarkdown,
         .stMarkdown *,
@@ -139,6 +162,13 @@ def apply_theme() -> None:
         [data-testid="stMultiSelect"],
         [data-testid="stNumberInput"] {
             color: var(--ars-text);
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            background: var(--ars-panel) !important;
+            border: 1px dashed var(--ars-border) !important;
+        }
+        [data-testid="stFileUploaderDropzone"] * {
+            color: var(--ars-text) !important;
         }
         input,
         textarea,
@@ -403,13 +433,27 @@ def apply_theme() -> None:
     )
 
 
-def init_state() -> None:
-    database.init_db()
+def request_headers() -> dict:
     try:
-        request_headers = dict(st.context.headers)
+        return dict(st.context.headers)
     except Exception:
-        request_headers = {}
-    authenticated_context = database.current_context(request_headers)
+        return {}
+
+
+def bind_current_session():
+    return initialize_session(st.session_state, request_headers())
+
+
+def audited_export(format_name, payload, run_id) -> None:
+    bind_current_session()
+    database.record_export(format_name, payload, run_id)
+
+
+def init_state() -> None:
+    session = bind_current_session()
+    database.init_db()
+    authenticated_context = session.context
+    st.session_state.public_session_notice = session.notice if session.ephemeral else ""
     prompts = default_prompts()
     st.session_state.setdefault("mode", "Demo Mode")
     st.session_state.setdefault("openai_api_key", "")
@@ -468,6 +512,8 @@ def load_demo() -> None:
 
 def effective_api_key() -> str:
     provider = selected_provider()
+    if public_session_mode():
+        return (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip()
     return (
         (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip()
         or streamlit_secret_api_key(provider)
@@ -479,6 +525,8 @@ def api_key_source() -> str:
     provider = selected_provider()
     if (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip():
         return "In-app session key"
+    if public_session_mode():
+        return "No session API key"
     if streamlit_secret_api_key(provider):
         return "Streamlit secrets"
     if config.api_key_for_provider(provider):
@@ -499,6 +547,8 @@ def selected_provider() -> str:
 
 
 def streamlit_secret_api_key(provider: str | None = None) -> str:
+    if public_session_mode():
+        return ""
     if not _streamlit_secrets_file_exists():
         return ""
     secret_name = PROVIDER_SECRET_NAMES[provider or selected_provider()]
@@ -509,6 +559,8 @@ def streamlit_secret_api_key(provider: str | None = None) -> str:
 
 
 def _streamlit_secrets_file_exists() -> bool:
+    if public_session_mode():
+        return False
     configured = os.getenv("STREAMLIT_SECRETS_FILE", "").strip()
     candidates = [
         Path(configured).expanduser() if configured else None,
@@ -516,6 +568,15 @@ def _streamlit_secrets_file_exists() -> bool:
         Path.home() / ".streamlit" / "secrets.toml",
     ]
     return any(path is not None and path.is_file() for path in candidates)
+
+
+def public_session_mode() -> bool:
+    check = getattr(config, "public_sessions_enabled", None)
+    return bool(check()) if check is not None else os.getenv("AUTH_MODE", "").lower() == "public-session"
+
+
+def external_connections_available() -> bool:
+    return not public_session_mode() or bool(config.EXTERNAL_TARGET_ALLOWED_HOSTS)
 
 
 def start_custom_mode() -> None:
@@ -586,57 +647,560 @@ def safe_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([safe_nested(record) for record in records])
 
 
+def navigate_to(page: str, message: str = "") -> None:
+    st.session_state._next_page = page
+    if message:
+        st.session_state._workflow_message = message
+    st.rerun()
+
+
+def install_review_workspace(workspace: dict) -> None:
+    baseline = evaluate_review_workspace(workspace)
+    candidate = evaluate_review_workspace(workspace, "candidate")
+    st.session_state.offline_workspace = workspace
+    st.session_state.offline_baseline = baseline
+    st.session_state.offline_candidate = candidate
+    st.session_state._offline_batch_request = "Original answers"
+
+
+def workflow_error(error: Exception, action: str = "import these files") -> None:
+    st.error(f"We couldn't {action}. Check the details below, correct the input, and try again.")
+    st.caption(safe_display_text(str(error)))
+
+
+def submit_saved_case_review(batch: str, case_id: str, form_suffix: str) -> None:
+    """Handle a form before rendering so advancing cases never reuses stale widgets."""
+    bind_current_session()
+    if not st.session_state.get("offline_workspace"):
+        st.session_state._workflow_warning = "This session ended. Restore your workspace download to continue."
+        return
+    frame = st.session_state[f"offline_{batch}"]
+    row = frame[frame["case_id"] == case_id].iloc[0].to_dict()
+    decision = st.session_state.get(f"review_decision_{form_suffix}")
+    note = optional_review_text(st.session_state.get(f"review_note_{form_suffix}"))
+    reviewer = optional_review_text(st.session_state.get(f"reviewer_{form_suffix}"))
+    checked = st.session_state.get(f"review_checked_{form_suffix}", False)
+    allowed = (
+        ["execution_error"] if row.get("execution_status") != "passed" else ["supported", "failed", "inconclusive"]
+    )
+    selected = next((value for value in allowed if REVIEW_LABELS[value] == decision), None)
+    if selected is None or not note.strip() or not reviewer.strip() or not checked:
+        st.session_state._workflow_warning = (
+            "Choose a decision, explain it, add your name, and confirm that you checked the evidence."
+        )
+        return
+    review = {key: row[key] for key in ("case_id", "response_hash", "case_version", "knowledge_base_version")}
+    review.update(
+        decision=selected,
+        note=note,
+        reviewer=reviewer,
+        reviewer_kind="ai_assisted"
+        if st.session_state.get(f"review_method_{form_suffix}") == "Reviewed with AI assistance"
+        else "human",
+    )
+    try:
+        updated, reviewed = save_case_review(st.session_state.offline_workspace, batch, frame, review)
+        st.session_state.offline_workspace = updated
+        st.session_state[f"offline_{batch}"] = reviewed
+        st.session_state.saved_reviewer_name = reviewer
+        remaining = reviewed[reviewed["review_status"] != "reviewed"]["case_id"].tolist()
+        if remaining:
+            st.session_state[f"_next_saved_case_{batch}"] = remaining[0]
+        st.session_state._workflow_message = f"Review saved. {len(remaining)} answers remain in this batch."
+    except Exception as exc:
+        st.session_state._workflow_warning = f"The review could not be saved: {safe_display_text(str(exc))}"
+
+
+def add_replacement_answers(*, sample: bool = False) -> None:
+    bind_current_session()
+    workspace = st.session_state.get("offline_workspace")
+    if not workspace:
+        st.session_state._workflow_warning = "This session ended. Restore your workspace download to continue."
+        return
+    try:
+        if sample:
+            responses = sample_replacements(workspace)
+            version, captured = "fictional-v2", utc_now_text()
+        else:
+            uploaded = st.session_state.get("replacement_upload")
+            version = st.session_state.get("replacement_version", "")
+            captured = st.session_state.get("replacement_captured", "")
+            if uploaded is None or not version.strip() or not captured.strip():
+                st.session_state._workflow_warning = "Add a replacement answer file, a version, and a capture time."
+                return
+            responses = read_response_file(uploaded.name, uploaded.getvalue())
+        updated = deepcopy(workspace)
+        updated["candidate"] = replacement_batch(responses, version, captured)
+        result = evaluate_review_workspace(updated, "candidate")
+        st.session_state.offline_workspace = updated
+        st.session_state.offline_candidate = result
+        st.session_state._offline_batch_request = "Replacement answers"
+        st.session_state._workflow_message = (
+            "Two authored replacement answers loaded. This demonstrates the workflow, not a real assistant improvement."
+            if sample
+            else f"Imported {len(result)} replacement answers. Review them before interpreting the comparison."
+        )
+    except Exception as exc:
+        st.session_state._workflow_warning = f"The replacements could not be imported: {safe_display_text(str(exc))}"
+
+
 def render_overview() -> None:
     st.markdown(
         """
         <div class="hero">
           <h1>AI Reliability Studio</h1>
-          <p><strong>QA and benchmarking dashboard for testing LLM assistants before launch.</strong></p>
-          <p>Upload documents, system prompt, and expected-answer test cases. The app runs the assistant and scores correctness, grounding, hallucination risk, citations, escalation behavior, latency, and cost.</p>
+          <p><strong>Check an assistant's answers against your sources.</strong></p>
+          <p>Bring saved answers or connect an assistant. Review the evidence, record your findings, and check what changed after a fix.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Load Sample Fintech Demo", type="primary", use_container_width=True):
+    c1, c2, c3 = st.columns(3)
+    with c1, st.container(border=True):
+        st.subheader("See how it works")
+        st.write("Review three fictional answers and try a replacement batch. No API key needed.")
+        if st.button("Try sample", type="primary", use_container_width=True, key="start_sample"):
             load_demo()
-            st.success("FinSure demo loaded.")
-    with c2:
-        if st.button("Start Custom Upload Mode", use_container_width=True):
+            install_review_workspace(sample_review_workspace())
+            navigate_to("Review saved answers", "FinSure demo loaded. Three fictional answers are ready to review.")
+    with c2, st.container(border=True):
+        st.subheader("Use answers you have")
+        st.write("Upload questions, source documents and saved answers. No assistant connection required.")
+        if st.button("Review saved answers", use_container_width=True, key="start_saved"):
+            navigate_to("Review saved answers")
+    with c3, st.container(border=True):
+        st.subheader("Collect new answers")
+        st.write("Connect your API or a model provider, then run a set of questions you control.")
+        if st.button("Evaluate live assistant", use_container_width=True, key="start_live"):
+            st.session_state.live_step = "1. Sources"
+            navigate_to("Evaluate live assistant")
+    st.info(
+        "Automatic checks help organize the evidence. They can be wrong or uncertain, so review every answer before "
+        "treating a finding as confirmed. This app does not certify launch readiness."
+    )
+    if st.session_state.get("offline_workspace"):
+        frame = st.session_state.offline_baseline
+        done = int(frame["review_status"].eq("reviewed").sum())
+        st.caption(f"Your current saved-answer workspace: {done} of {len(frame)} original answers reviewed.")
+    with st.expander("Existing project tools"):
+        st.write(
+            "Project setup, prompt comparison, calibration, run history, and exports remain available in the sidebar."
+        )
+        if st.button("Open project setup"):
+            navigate_to("Project Setup")
+        if st.button("Start a new live project"):
             start_custom_mode()
-            st.success("Custom upload mode started.")
+            navigate_to("Evaluate live assistant")
 
-    st.markdown(f"<span class='mode-pill'>{st.session_state.mode}</span>", unsafe_allow_html=True)
-    if not effective_api_key():
-        st.warning(
-            "Synthetic demonstration — not model-quality evidence. Mock runs demonstrate the workflow and can never "
-            "receive a production launch verdict. Add a provider key or configure an external target to test a real system."
+
+def render_saved_import() -> None:
+    st.subheader("1. Add your files")
+    st.write("Use a question file with expected answers, the source documents, and the assistant's saved answers.")
+    st.download_button("Download starter files", starter_pack(), "saved-answer-starter.zip", "application/zip")
+    method = st.radio(
+        "How would you like to add the data?", ["Upload files", "Paste JSON"], horizontal=True, key="saved_input_method"
+    )
+    if st.button("Use the three-answer sample", key="saved_import_sample"):
+        install_review_workspace(sample_review_workspace())
+        navigate_to("Review saved answers", "Three fictional answers loaded. Review their sources to try the workflow.")
+    with st.form("saved_import_form"):
+        source_files, dataset_file, answer_file = [], None, None
+        source_text, question_text, answer_text = "", "", ""
+        if method == "Upload files":
+            source_files = st.file_uploader(
+                "Source documents",
+                type=UPLOAD_TYPES,
+                accept_multiple_files=True,
+                key="saved_sources_upload",
+                help="For source JSON, use the passage format in the starter files. TXT, Markdown, PDF and DOCX also work.",
+            )
+            c1, c2 = st.columns(2)
+            dataset_file = c1.file_uploader(
+                "Questions and expected answers", type=EVALUATION_UPLOAD_TYPES, key="saved_questions_upload"
+            )
+            answer_file = c2.file_uploader(
+                "Saved assistant answers", type=["json", "jsonl", "csv"], key="saved_answers_upload"
+            )
+        else:
+            st.caption(
+                "Paste JSON arrays in the same format as the starter files. Keep complete source passages and matching case IDs."
+            )
+            source_text = st.text_area("Source passages JSON", height=160, key="saved_sources_json")
+            question_text = st.text_area("Questions JSON", height=160, key="saved_questions_json")
+            answer_text = st.text_area("Answers JSON", height=160, key="saved_answers_json")
+        c1, c2 = st.columns(2)
+        target_name = c1.text_input("Assistant name", placeholder="Customer support assistant", key="saved_target_name")
+        target_version = c2.text_input(
+            "Assistant version or batch name", placeholder="Before the September update", key="saved_target_version"
+        )
+        captured_at = st.text_input(
+            "When were these answers collected?",
+            placeholder="2026-09-07T09:00:00+00:00",
+            key="saved_captured_at",
+            help="Include the time zone. This is the capture time you report, not a verified timestamp.",
+        )
+        fictional = st.checkbox("These are fictional sample answers", key="saved_fixture_flag")
+        submitted = st.form_submit_button("Import answers", type="primary")
+    st.caption(
+        "Only import content you are permitted to review. Importing saved answers does not call a model provider."
+    )
+    if submitted:
+        missing_upload = method == "Upload files" and (not source_files or dataset_file is None or answer_file is None)
+        missing_paste = method == "Paste JSON" and not all(
+            value.strip() for value in (source_text, question_text, answer_text)
+        )
+        if missing_upload or missing_paste:
+            st.warning("Add the sources, question file, and answer file to continue.")
+        elif not all(value.strip() for value in (target_name, target_version, captured_at)):
+            st.warning("Add an assistant name, a version or batch name, and the capture time.")
+        else:
+            try:
+                if method == "Upload files":
+                    dataset = read_eval_dataset(dataset_file.name, dataset_file.getvalue())
+                    responses = read_response_file(answer_file.name, answer_file.getvalue())
+                    sources = read_reference_uploads(source_files)
+                else:
+                    dataset = read_eval_dataset("questions.json", question_text.encode())
+                    responses = read_response_file("answers.json", answer_text.encode())
+                    sources = read_reference_json(source_text.encode())
+                workspace = new_review_workspace(
+                    dataset,
+                    sources,
+                    responses,
+                    target_name=target_name,
+                    target_version=target_version,
+                    captured_at=captured_at,
+                    evidence_kind="fixture" if fictional else "client_supplied",
+                )
+                install_review_workspace(workspace)
+                navigate_to("Review saved answers", f"Imported {len(responses)} answers. Each is pending your review.")
+            except Exception as exc:
+                workflow_error(exc)
+    with st.expander("Resume a saved workspace"):
+        saved = st.file_uploader("Workspace file exported by this app", type=["json"], key="resume_saved_workspace")
+        if st.button("Resume review", disabled=saved is None):
+            try:
+                install_review_workspace(read_review_workspace(saved.getvalue()))
+                navigate_to(
+                    "Review saved answers",
+                    "Workspace restored. Existing review hashes were checked against its inputs.",
+                )
+            except Exception as exc:
+                workflow_error(exc, "restore this workspace")
+
+
+def render_saved_case_review(workspace: dict, batch: str, frame: pd.DataFrame) -> None:
+    pending = frame[frame["review_status"] != "reviewed"]["case_id"].tolist()
+    choices = frame["case_id"].tolist()
+    selection_key = f"saved_case_{batch}"
+    requested = st.session_state.pop(f"_next_saved_case_{batch}", None)
+    if requested in choices:
+        st.session_state[selection_key] = requested
+    if st.session_state.get(selection_key) not in choices:
+        st.session_state[selection_key] = pending[0] if pending else choices[0]
+    questions = frame.set_index("case_id")["question"].to_dict()
+    selected = st.selectbox(
+        "Answer to review",
+        choices,
+        format_func=lambda value: f"{'Pending' if value in pending else 'Reviewed'} · {value} · {safe_display_text(questions[value])}",
+        key=selection_key,
+    )
+    row = frame[frame["case_id"] == selected].iloc[0].to_dict()
+    expected_case = next(case for case in workspace["dataset"] if str(case["case_id"]) == str(selected))
+    st.subheader(safe_display_text(row["question"]))
+    left, right = st.columns([1, 1])
+    with left:
+        st.markdown("**Assistant answer**")
+        render_plain_text(row.get("actual_answer", ""))
+        if row.get("execution_status") != "passed":
+            st.warning(
+                "The assistant did not complete this answer. Record an execution error separately from answer quality."
+            )
+        action = row.get("structured_escalation") or {}
+        if action.get("should_escalate"):
+            st.write(
+                f"Returned action: escalate to {safe_display_text(action.get('destination', 'not specified'))}; urgency {safe_display_text(action.get('urgency', 'not specified'))}."
+            )
+        citations = row.get("provided_citations") or []
+        st.caption(f"Citations returned: {len(citations)}")
+        if citations:
+            with st.expander("Inspect the returned citations"):
+                st.json(safe_nested(citations))
+        with st.expander("Automatic check · advisory only"):
+            st.write(safe_display_text(row.get("failure_type", "Not available")))
+            st.caption(
+                "This result is not your review decision. A high score does not prove that the answer is correct."
+            )
+            st.json(safe_nested(row.get("score_explanation", {})))
+    with right:
+        st.markdown("**Expected answer**")
+        render_plain_text(expected_case.get("expected_answer", ""))
+        if expected_case.get("should_escalate"):
+            st.caption(
+                f"Expected routing: {expected_case.get('escalation_destination') or 'escalate'} · {expected_case.get('escalation_urgency') or 'urgency not specified'}"
+            )
+        st.markdown("**Source evidence**")
+        expected_ids = set(expected_case.get("expected_passages") or [])
+        sources = workspace["sources"]
+        relevant = [chunk for chunk in sources if chunk.get("chunk_id") in expected_ids] if expected_ids else sources
+        if not relevant:
+            st.warning("No matching expected passage was found. Inspect all sources before deciding.")
+        for chunk in relevant:
+            with st.expander(
+                f"{safe_display_text(chunk['source_name'])} · {safe_display_text(chunk.get('section') or chunk['chunk_id'])}",
+                expanded=len(relevant) <= 2,
+            ):
+                st.caption(f"Passage ID: {safe_display_text(chunk['chunk_id'])}")
+                render_plain_text(chunk["chunk_text"])
+        if expected_ids:
+            with st.expander("All uploaded sources"):
+                for chunk in sources:
+                    st.markdown(
+                        f"**{safe_display_text(chunk['source_name'])} · {safe_display_text(chunk['chunk_id'])}**"
+                    )
+                    render_plain_text(chunk["chunk_text"])
+    form_suffix = f"{batch}_{selected}_{row['response_hash'][:12]}"
+    with st.form(f"review_form_{form_suffix}"):
+        st.markdown("**Your review**")
+        allowed = (
+            ["execution_error"] if row.get("execution_status") != "passed" else ["supported", "failed", "inconclusive"]
+        )
+        labels = ["Choose a decision", *[REVIEW_LABELS[value] for value in allowed]]
+        existing_decision = REVIEW_LABELS.get(optional_review_text(row.get("review_decision")), "Choose a decision")
+        st.selectbox(
+            "Decision",
+            labels,
+            index=labels.index(existing_decision) if existing_decision in labels else 0,
+            key=f"review_decision_{form_suffix}",
+        )
+        st.text_area(
+            "What in the source supports your decision?",
+            value=optional_review_text(row.get("review_note")),
+            placeholder="Describe the relevant passage, mismatch, or missing evidence.",
+            key=f"review_note_{form_suffix}",
+        )
+        c1, c2 = st.columns(2)
+        c1.text_input(
+            "Reviewer name",
+            value=optional_review_text(row.get("reviewer"))
+            or optional_review_text(st.session_state.get("saved_reviewer_name")),
+            key=f"reviewer_{form_suffix}",
+        )
+        c2.selectbox(
+            "Review method",
+            ["Reviewed by me", "Reviewed with AI assistance"],
+            index=int(optional_review_text(row.get("reviewer_kind")) == "ai_assisted"),
+            key=f"review_method_{form_suffix}",
+        )
+        st.checkbox(
+            "I checked this answer and its returned actions against the source evidence.",
+            key=f"review_checked_{form_suffix}",
+        )
+        st.form_submit_button(
+            "Save review and continue",
+            type="primary",
+            on_click=submit_saved_case_review,
+            args=(batch, selected, form_suffix),
+        )
+
+
+def render_saved_retest(workspace: dict, baseline: pd.DataFrame, candidate: pd.DataFrame) -> None:
+    st.subheader("3. Check replacement answers")
+    st.caption(
+        "Optional: upload answers for any subset of the original case IDs. The questions and sources stay fixed for a fair comparison."
+    )
+    with st.expander(
+        "Add replacement answers", expanded=bool(baseline["review_status"].eq("reviewed").all() and candidate.empty)
+    ):
+        uploaded = st.file_uploader("Replacement answer file", type=["json", "jsonl", "csv"], key="replacement_upload")
+        c1, c2 = st.columns(2)
+        c1.text_input("Replacement version or batch name", key="replacement_version")
+        c2.text_input(
+            "Replacement capture time with time zone",
+            placeholder="2026-09-07T10:00:00+00:00",
+            key="replacement_captured",
+        )
+        st.button("Import replacements", disabled=uploaded is None, on_click=add_replacement_answers)
+        if workspace.get("evidence_kind") == "fixture" and workspace.get("target_name") == "FinSure sample assistant":
+            st.button(
+                "Try two fictional replacements",
+                key="sample_replacements",
+                on_click=add_replacement_answers,
+                kwargs={"sample": True},
+            )
+    if not candidate.empty:
+        comparison = compare_response_reviews(baseline, candidate)
+        reviewed = candidate["review_status"].eq("reviewed").sum()
+        st.write(
+            f"{len(candidate)} replacement answers · {reviewed} reviewed · {len(baseline) - len(candidate)} original cases not retested"
+        )
+        friendly = {
+            "resolved": "Resolved",
+            "regressed": "Regressed",
+            "unchanged": "Unchanged",
+            "pending_review": "Pending review",
+            "inconclusive": "Cannot determine",
+            "not_comparable": "Not comparable",
+            "review_decision_changed": "Review changed; answer unchanged",
+            "execution_recovered": "Execution recovered",
+            "execution_failed": "Execution failed",
+        }
+        table = pd.DataFrame(comparison["compared_cases"])
+        table["status"] = table["status"].map(lambda value: friendly.get(value, value))
+        st.dataframe(
+            safe_dataframe(table[["case_id", "status", "baseline_decision", "candidate_decision", "reason"]]),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.caption(
+            "Changes reflect explicit reviews of the supplied answers. They do not prove a deployed improvement."
+        )
+        st.download_button(
+            "Download comparison", json.dumps(comparison, indent=2), "answer-comparison.json", "application/json"
+        )
+
+
+def render_saved_answers() -> None:
+    st.title("Review saved answers")
+    workspace = st.session_state.get("offline_workspace")
+    if not workspace:
+        st.progress(0.0, text="Step 1 of 3 · Add files, then review answers and compare replacements")
+        render_saved_import()
+        return
+    baseline = st.session_state.offline_baseline
+    candidate = st.session_state.offline_candidate
+    if workspace["evidence_kind"] == "fixture":
+        st.info(
+            "Fictional sample · These answers were authored to demonstrate the workflow. They are not customer or model performance evidence."
         )
     else:
-        st.success(f"Real LLM Mode is available for {st.session_state.api_provider} using {api_key_source()}.")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Documents", len(st.session_state.documents))
-    c2.metric("Chunks", len(st.session_state.chunks))
-    c3.metric("Eval cases", len(st.session_state.eval_df))
-    c4.metric("Latest results", len(st.session_state.last_results))
-
-    st.subheader("Product flow")
-    st.dataframe(
-        pd.DataFrame(
-            [
-                ["1", "Load sample demo or upload custom data"],
-                ["2", "Add company documents and paste the current system prompt"],
-                ["3", "Generate and edit an improved prompt"],
-                ["4", "Upload expected-answer evaluation cases"],
-                ["5", "Run evaluation and review launch readiness"],
-                ["6", "Compare prompts, analyze failures, and export results"],
-            ],
-            columns=["Step", "Action"],
-        ),
-        hide_index=True,
-        use_container_width=True,
+        st.info(
+            "Uploaded answers · Their origin is reported by the uploader. Automatic checks are advisory; each answer needs a separate review."
+        )
+    options = ["Original answers"] + (["Replacement answers"] if not candidate.empty else [])
+    requested = st.session_state.pop("_offline_batch_request", None)
+    if requested in options:
+        st.session_state.saved_batch_select = requested
+    selected_batch = st.radio("Batch to review", options, horizontal=True, key="saved_batch_select")
+    batch = "baseline" if selected_batch == "Original answers" else "candidate"
+    frame = baseline if batch == "baseline" else candidate
+    done = int(frame["review_status"].eq("reviewed").sum())
+    st.progress(done / len(frame), text=f"Step 2 of 3 · {done} of {len(frame)} {selected_batch.lower()} reviewed")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Pending review", len(frame) - done)
+    c2.metric("Needs a fix", int(frame["review_decision"].eq("failed").sum()))
+    c3.metric("Cannot determine", int(frame["review_decision"].eq("inconclusive").sum()))
+    if done < len(frame):
+        st.caption(
+            "Next: inspect the answer and source, then save your decision. Passing automatic checks do not complete a review."
+        )
+    else:
+        st.success("This batch is reviewed. Download the report or check replacement answers below.")
+    st.subheader("2. Review the evidence")
+    render_saved_case_review(workspace, batch, frame)
+    st.divider()
+    render_saved_retest(workspace, baseline, candidate)
+    st.divider()
+    st.subheader("Save your work")
+    st.caption(
+        f"Current report: {done} reviewed, {len(frame) - done} pending. Client retrieval, latency and cost remain unknown unless supplied."
     )
+    c1, c2, c3 = st.columns(3)
+    c1.download_button("Download HTML report", html_report(frame), f"{batch}-answer-review.html", "text/html")
+    c2.download_button("Download JSON report", json_report(frame), f"{batch}-answer-review.json", "application/json")
+    c3.download_button("Download CSV report", csv_report(frame), f"{batch}-answer-review.csv", "text/csv")
+    st.download_button(
+        "Download workspace to resume later",
+        json.dumps(workspace, indent=2, default=str),
+        "saved-answer-workspace.json",
+        "application/json",
+        help="Contains your uploaded sources, answers and saved reviews. Keep it private and upload it through Resume a saved workspace.",
+    )
+    st.caption("Keep a workspace download before leaving. Browser session data may be cleared when your session ends.")
+    if st.checkbox("Import another batch or resume a saved workspace", key="offline_show_import"):
+        render_saved_import()
+
+
+def render_live_assistant() -> None:
+    st.title("Evaluate live assistant")
+    st.caption("Prepare sources and questions, connect your assistant, then inspect the returned answers.")
+    steps = ["1. Sources", "2. Questions", "3. Connect and run", "4. Results"]
+    requested = st.session_state.pop("_next_live_step", None)
+    if requested in steps:
+        st.session_state.live_step = requested
+    step = st.radio("Evaluation steps", steps, horizontal=True, key="live_step")
+    st.progress(steps.index(step) / 3, text=step)
+    if step == steps[0]:
+        st.write("Add the documents that contain the answers your assistant should use.")
+        files = st.file_uploader(
+            "Source documents", type=UPLOAD_TYPES, accept_multiple_files=True, key="live_source_upload"
+        )
+        if files and st.button("Add sources", type="primary"):
+            if save_uploaded_documents(files):
+                st.success("Sources added. Continue to the question set.")
+        if st.session_state.chunks:
+            st.success(f"{len(st.session_state.chunks)} source passages ready.")
+        if st.button("Next: questions", disabled=not st.session_state.chunks):
+            st.session_state._next_live_step = steps[1]
+            st.rerun()
+        if st.checkbox("Show source and retrieval tools", key="live_source_tools"):
+            render_knowledge_base()
+    elif step == steps[1]:
+        uploaded = st.file_uploader(
+            "Question set with expected answers", type=EVALUATION_UPLOAD_TYPES, key="live_questions_upload"
+        )
+        if uploaded:
+            try:
+                st.session_state.eval_df = read_eval_dataset(uploaded.name, uploaded.getvalue())
+            except Exception as exc:
+                workflow_error(exc, "read the question set")
+        frame = st.session_state.eval_df
+        if not frame.empty:
+            st.write(f"{len(frame)} questions ready.")
+            st.dataframe(
+                safe_dataframe(
+                    frame[[column for column in ("case_id", "question", "expected_answer") if column in frame]]
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
+        st.download_button(
+            "Download example question set",
+            json.dumps(sample_review_workspace()["dataset"], indent=2),
+            "example-questions.json",
+            "application/json",
+        )
+        if st.button("Next: connect and run", disabled=frame.empty):
+            st.session_state._next_live_step = steps[2]
+            st.rerun()
+        with st.expander("Edit questions and inspect coverage"):
+            render_eval_dataset()
+    elif step == steps[2]:
+        with st.expander(
+            "Connect an assistant API",
+            expanded=external_connections_available()
+            and not bool(st.session_state.external_target_config.get("endpoint")),
+        ):
+            render_target_setup()
+        with st.expander(
+            "Use a model provider or edit the system prompt", expanded=not external_connections_available()
+        ):
+            st.write(
+                "For a direct model, add your session API key in Settings. API requests and provider calls only run when you explicitly start them."
+            )
+            if st.button("Open provider settings"):
+                navigate_to("Settings / Export")
+            render_system_prompt()
+        render_run_evaluation(live_only=True)
+        if not st.session_state.last_results.empty and st.button("Next: inspect results", type="primary"):
+            st.session_state._next_live_step = steps[3]
+            st.rerun()
+    else:
+        render_results_dashboard()
+        if st.checkbox("Investigate individual failures", key="live_failure_tools"):
+            render_failure_analysis()
+        if not st.session_state.last_results.empty and st.button("Export or compare this run"):
+            navigate_to("Settings / Export")
 
 
 def render_project_setup() -> None:
@@ -997,6 +1561,11 @@ def external_target_from_state() -> ExternalHTTPTarget:
 
 def render_target_setup() -> None:
     st.title("Target Setup")
+    if not external_connections_available():
+        st.info(
+            "External API connections are disabled on this public deployment. Use saved-answer review or your own local deployment."
+        )
+        return
     st.info(
         "Choose Synthetic in Run Evaluation for workflow demonstrations, Direct model for a foundation-model call, "
         "or configure an External API here to test your production assistant. External calls never fall back to mock data."
@@ -1061,7 +1630,12 @@ def render_target_setup() -> None:
             st.success(f"Target configuration valid. Version {adapter.version[:12]}. No raw secret will be stored.")
         except Exception as exc:
             st.error(str(exc))
-    if values.get("endpoint") and st.button("Run health check / test request"):
+    allow_health_check = False
+    if values.get("endpoint"):
+        allow_health_check = st.checkbox(
+            "I authorize a test request to this endpoint and any charges on my connected account."
+        )
+    if values.get("endpoint") and st.button("Run health check / test request", disabled=not allow_health_check):
         try:
             st.session_state.external_target_config = {
                 **values,
@@ -1078,7 +1652,7 @@ def render_target_setup() -> None:
             st.error(str(exc))
 
 
-def render_run_evaluation() -> None:
+def render_run_evaluation(*, live_only: bool = False) -> None:
     st.title("Run Evaluation")
     ready = (
         bool(st.session_state.chunks) and not st.session_state.eval_df.empty and bool(st.session_state.current_prompt)
@@ -1088,12 +1662,21 @@ def render_run_evaluation() -> None:
     if st.session_state.eval_df.empty:
         st.warning("Load an evaluation dataset before running evaluation.")
 
+    target_options = (
+        ["External assistant/API", "Direct foundation model"]
+        if live_only
+        else ["Synthetic demonstration", "Direct foundation model", "External assistant/API"]
+    )
     target_kind = st.radio(
         "Evaluation target",
-        ["Synthetic demonstration", "Direct foundation model", "External assistant/API"],
+        target_options,
+        index=1 if live_only and not external_connections_available() else 0,
         horizontal=True,
     )
-    mode = st.radio("Evaluation mode", ["Current Prompt Only", "Current Prompt vs Improved Prompt"], horizontal=True)
+    with st.expander("Prompt comparison (optional)"):
+        mode = st.radio(
+            "Evaluation mode", ["Current Prompt Only", "Current Prompt vs Improved Prompt"], horizontal=True
+        )
     target_adapter = None
     mock_scenario = "__per_case__"
     if target_kind == "Synthetic demonstration":
@@ -1127,9 +1710,7 @@ def render_run_evaluation() -> None:
     elif target_kind == "Direct foundation model":
         direct_models = [item for item in model_options() if item != "mock-model"]
         if not direct_models:
-            st.error(
-                f"No {st.session_state.api_provider} key is configured. Add a session or environment key in Settings."
-            )
+            st.error(f"No {st.session_state.api_provider} key is configured. Add your session key in Settings.")
             model = config.PROVIDER_MODELS[selected_provider()][0]
             ready = False
         else:
@@ -1139,33 +1720,42 @@ def render_run_evaluation() -> None:
             )
     else:
         model = "external-assistant"
-        try:
-            target_adapter = external_target_from_state()
-            st.success(f"External target configured. Version {target_adapter.version[:12]}.")
-        except Exception as exc:
-            st.error(f"Configure the external target on Target Setup before running: {exc}")
+        if not external_connections_available():
+            st.info(
+                "External API connections are disabled on this public deployment. Choose a provider model with your own key, or review saved answers."
+            )
             ready = False
+        else:
+            try:
+                target_adapter = external_target_from_state()
+                st.success(f"External target configured. Version {target_adapter.version[:12]}.")
+            except Exception as exc:
+                st.error(f"Configure the external target on Target Setup before running: {exc}")
+                ready = False
 
-    c1, c2, c3, c4 = st.columns(4)
-    top_k = c1.slider("top_k retrieval", 1, 8, config.DEFAULT_TOP_K)
-    similarity_threshold = c2.slider(
-        "Minimum similarity",
-        0.0,
-        1.0,
-        float(st.session_state.similarity_threshold),
-        0.01,
-    )
-    latency_threshold = c3.number_input("Latency gate (ms)", min_value=100, value=config.LATENCY_THRESHOLD_MS, step=100)
-    cost_threshold = c4.number_input(
-        "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
-    )
-    c1, c2 = st.columns(2)
-    max_concurrency = c1.slider("Concurrency", 1, 16, 4)
-    max_retries = c2.slider("Retryable-error retries", 0, 5, 2)
-    candidate_tuned_on_dataset = st.checkbox(
-        "A candidate in this run was tuned using cases from this dataset",
-        help="If selected, the dataset must contain an explicit tuning_disclosure before it can support a launch verdict.",
-    )
+    with st.expander("Advanced run settings"):
+        c1, c2, c3, c4 = st.columns(4)
+        top_k = c1.slider("top_k retrieval", 1, 8, config.DEFAULT_TOP_K)
+        similarity_threshold = c2.slider(
+            "Minimum similarity",
+            0.0,
+            1.0,
+            float(st.session_state.similarity_threshold),
+            0.01,
+        )
+        latency_threshold = c3.number_input(
+            "Latency gate (ms)", min_value=100, value=config.LATENCY_THRESHOLD_MS, step=100
+        )
+        cost_threshold = c4.number_input(
+            "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
+        )
+        c1, c2 = st.columns(2)
+        max_concurrency = c1.slider("Concurrency", 1, 16, 4)
+        max_retries = c2.slider("Retryable-error retries", 0, 5, 2)
+        candidate_tuned_on_dataset = st.checkbox(
+            "A candidate in this run was tuned using cases from this dataset",
+            help="If selected, the dataset must contain an explicit tuning_disclosure before it can support a launch verdict.",
+        )
 
     prompts = {"Current Prompt": st.session_state.current_prompt}
     if mode == "Current Prompt vs Improved Prompt":
@@ -1187,7 +1777,13 @@ def render_run_evaluation() -> None:
             "This run may be useful for diagnosis, but its dataset cannot support a launch verdict. "
             + " ".join(run_dataset_quality["errors"] + run_dataset_quality["warnings"])
         )
-    confirmed = st.checkbox("I confirm this run may send prompts, context, and dataset inputs to the selected target.")
+    confirmed = (
+        st.checkbox(
+            "I authorize sending these questions and sources to the selected target, and any charges on my connected account."
+        )
+        if model != "mock-model"
+        else st.checkbox("I understand this run uses fictional answers to demonstrate the workflow.")
+    )
     if st.button("Run Evaluation", type="primary", disabled=not (ready and confirmed)):
         progress = st.progress(0)
         status = st.empty()
@@ -1662,8 +2258,9 @@ def render_settings_export() -> None:
     provider = selected_provider()
     secret_name = PROVIDER_SECRET_NAMES[provider]
     st.caption(
-        f"Key priority: in-app key > Streamlit secrets > .env {secret_name}. "
-        "Missing credentials produce an explicit error; synthetic mode must be selected separately."
+        "Only the API key you enter in this browser session can be used in the public app."
+        if public_session_mode()
+        else f"Key priority: in-app key > Streamlit secrets > .env {secret_name}. Missing credentials produce an explicit error; synthetic mode must be selected separately."
     )
     keys = dict(st.session_state.get("provider_api_keys", {}))
     entered_key = st.text_input(
@@ -1671,9 +2268,9 @@ def render_settings_export() -> None:
         value=keys.get(provider, ""),
         type="password",
         placeholder="Paste the provider API key",
-        help=(
-            f"Priority: in-app key > Streamlit secrets > .env {secret_name}. " "There is no automatic mock fallback."
-        ),
+        help="This key is used only when you authorize a provider call. It stays in this browser session."
+        if public_session_mode()
+        else f"Priority: in-app key > Streamlit secrets > .env {secret_name}. There is no automatic mock fallback.",
     )
     keys[provider] = entered_key.strip()
     st.session_state.provider_api_keys = keys
@@ -1697,7 +2294,12 @@ def render_settings_export() -> None:
     c1, c2, c3 = st.columns(3)
     provider_models = config.PROVIDER_MODELS[provider]
     c1.metric("Streamlit secrets key", "Present" if streamlit_secret_api_key(provider) else "Not present")
-    c2.metric(f".env {secret_name}", "Present" if config.api_key_for_provider(provider) else "Not present")
+    c2.metric(
+        "Server credentials",
+        "Disabled for public sessions"
+        if public_session_mode()
+        else ("Present" if config.api_key_for_provider(provider) else "Not present"),
+    )
     c3.metric("Model A", provider_models[0])
     st.metric("Model B", provider_models[1] if len(provider_models) > 1 else "Not configured")
     storage_label = (
@@ -1707,6 +2309,8 @@ def render_settings_export() -> None:
     )
     st.metric("Storage mode", storage_label)
     st.caption("Local filesystem and connection locations are intentionally hidden from the user interface.")
+    if st.session_state.get("public_session_notice"):
+        st.info(st.session_state.public_session_notice)
 
     runs = database.eval_runs_df()
     if not runs.empty:
@@ -1731,7 +2335,7 @@ def render_settings_export() -> None:
             csv_data,
             "ai_reliability_results.csv",
             "text/csv",
-            on_click=database.record_export,
+            on_click=audited_export,
             args=("csv", csv_data, export_run_id),
         )
         c2.download_button(
@@ -1739,7 +2343,7 @@ def render_settings_export() -> None:
             json_data,
             "ai_reliability_results.json",
             "application/json",
-            on_click=database.record_export,
+            on_click=audited_export,
             args=("json", json_data, export_run_id),
         )
         c3.download_button(
@@ -1747,7 +2351,7 @@ def render_settings_export() -> None:
             html_data,
             "ai_reliability_results.html",
             "text/html",
-            on_click=database.record_export,
+            on_click=audited_export,
             args=("html", html_data, export_run_id),
         )
     st.subheader("Destructive actions")
@@ -1769,33 +2373,11 @@ def main() -> None:
     apply_theme()
     init_state()
     st.sidebar.title("AI Reliability Studio")
-    st.sidebar.caption("Test, measure, improve, and safely escalate.")
-    page = st.sidebar.radio(
-        "Navigate",
-        [
-            "Overview",
-            "Project Setup",
-            "Knowledge Base",
-            "System Prompt",
-            "Target Setup",
-            "Evaluation Dataset",
-            "Evaluator Calibration",
-            "Run Evaluation",
-            "Results Dashboard",
-            "Failure Analysis",
-            "Prompt Comparison",
-            "Run History / Comparison",
-            "Settings / Export",
-        ],
-    )
-    st.sidebar.divider()
-    st.sidebar.write(f"Mode: {st.session_state.mode}")
-    st.sidebar.write(f"Documents: {len(st.session_state.documents)}")
-    st.sidebar.write(f"Chunks: {len(st.session_state.chunks)}")
-    st.sidebar.write(f"Eval rows: {len(st.session_state.eval_df)}")
-
+    st.sidebar.caption("Sources → answers → reviewed findings")
     pages = {
         "Overview": render_overview,
+        "Review saved answers": render_saved_answers,
+        "Evaluate live assistant": render_live_assistant,
         "Project Setup": render_project_setup,
         "Knowledge Base": render_knowledge_base,
         "System Prompt": render_system_prompt,
@@ -1809,6 +2391,25 @@ def main() -> None:
         "Run History / Comparison": render_run_history,
         "Settings / Export": render_settings_export,
     }
+    requested = st.session_state.pop("_next_page", None)
+    if requested in pages:
+        st.session_state.page = requested
+    with st.sidebar.expander("All tools and settings", expanded=False):
+        page = st.radio("Navigate", list(pages), key="page")
+        st.caption(
+            f"{len(st.session_state.chunks)} source passages · {len(st.session_state.eval_df)} evaluation questions"
+        )
+    if st.session_state.get("public_session_notice"):
+        st.sidebar.info(st.session_state.public_session_notice)
+        if st.sidebar.button("End session and clear my data"):
+            end_public_session(st.session_state)
+            st.rerun()
+    if page != "Overview" and st.button("← Start", key="return_to_start"):
+        navigate_to("Overview")
+    if message := st.session_state.pop("_workflow_message", None):
+        st.success(message)
+    if warning := st.session_state.pop("_workflow_warning", None):
+        st.warning(warning)
     pages[page]()
 
 

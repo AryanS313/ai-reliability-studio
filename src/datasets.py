@@ -183,18 +183,14 @@ def normalize_dataset_frame(df: pd.DataFrame, *, allow_legacy: bool = True) -> p
         out["tags"] = out["category"].apply(lambda value: [str(value).strip().lower().replace(" ", "-")])
     else:
         out["tags"] = out["tags"].apply(parse_list)
-    if "expected_answers" not in out:
-        out["expected_answers"] = out.get("expected_answer", pd.Series([""] * len(out))).apply(
-            lambda value: [str(value)] if not _blank(value) else []
+    # Apply legacy fallbacks per row so adding another case with an optional
+    # list column cannot change this case's normalized expectations or hash.
+    for plural, singular in (("expected_answers", "expected_answer"), ("expected_sources", "expected_source")):
+        out[plural] = out.apply(
+            lambda row, plural=plural, singular=singular: parse_list(row.get(plural))
+            or ([str(row[singular])] if not _blank(row.get(singular)) else []),
+            axis=1,
         )
-    else:
-        out["expected_answers"] = out["expected_answers"].apply(parse_list)
-    if "expected_sources" not in out:
-        out["expected_sources"] = out.get("expected_source", pd.Series([""] * len(out))).apply(
-            lambda value: [str(value)] if not _blank(value) else []
-        )
-    else:
-        out["expected_sources"] = out["expected_sources"].apply(parse_list)
     if "should_escalate" in out:
         out["should_escalate"] = out["should_escalate"].apply(lambda value: strict_bool(value, allow_blank=True))
     else:
@@ -228,6 +224,8 @@ def normalize_dataset_frame(df: pd.DataFrame, *, allow_legacy: bool = True) -> p
     for field, default in defaults.items():
         if field not in out:
             out[field] = default
+        else:
+            out[field] = out[field].apply(lambda value, default=default: default if _blank(value) else value)
     out["severity"] = out["severity"].astype(str).str.strip().str.lower()
     out["split"] = out["split"].astype(str).str.strip().str.lower()
     out.attrs["source_quality_report"] = source_quality

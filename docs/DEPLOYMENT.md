@@ -10,7 +10,25 @@ cp .env.example .env
 streamlit run app.py
 ```
 
-Local mode uses SQLite and an explicit single-user workspace. Do not load proprietary or regulated data into a public demo.
+The Streamlit entrypoint defaults to `AUTH_MODE=public-session`: each browser session receives a separate temporary SQLite workspace. Work does not survive session expiry or server restart; use the saved-answer workspace download to resume it later. Provider keys belong to the current session and do not fall back to server secrets. To deliberately use one persistent local development workspace, start with `AUTH_MODE=single-user streamlit run app.py`. Production single-user access remains disabled.
+
+## Public container
+
+The root `Dockerfile` packages the same application with the pinned dependencies, a non-root user, and a Streamlit health check. Its explicit copy list excludes local databases, environment files and credentials. It uses private public sessions by default; it does not install experimental semantic-model weights.
+
+```bash
+docker build -t ai-reliability-studio .
+docker run --detach --name ai-reliability-studio --restart unless-stopped \
+  -p 8501:8501 ai-reliability-studio
+```
+
+Place the service behind HTTPS with WebSocket support. Do not disable XSRF protection or publish the Docker management socket. Check `/_stcore/health` for process availability, then separately exercise the actual browser workflows: a health response alone does not execute or verify the application interface.
+
+Public external-API connections are disabled until the administrator supplies `EXTERNAL_TARGET_ALLOWED_HOSTS` as a comma-separated list of approved hostnames. HTTPS and public destination addresses are required. Keep this list limited to endpoints you control or trust; visitors cannot add destinations to it from the UI. Saved-answer review and session-key foundation-provider connections do not need this custom-target allowlist.
+
+The container restart policy recovers a failed process while its machine is available. It does not change a hosting provider's inactivity policy. Streamlit Community Cloud sleeps after 12 hours without traffic and has no documented setting to disable that behavior. See [hosting options](HOSTING_OPTIONS.md) before choosing an always-running service. No periodic keepalive job is included.
+
+For authenticated, durable workspaces, use the production prerequisites below. Anonymous temporary workspaces are not a replacement for backed-up organizational storage.
 
 ## Production prerequisites
 

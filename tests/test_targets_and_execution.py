@@ -130,7 +130,8 @@ def test_real_provider_failure_is_never_converted_to_mock(monkeypatch):
     result = generate_answer("Question", "Context", "Prompt", "gpt-4o-mini", api_key="session-secret")
     assert result["status"] == "failed"
     assert result["answer"] == ""
-    assert result["model"] == "gpt-4o-mini"
+    assert result["model"] is None
+    assert result["metadata"]["requested_model"] == "gpt-4o-mini"
     assert "secret provider detail" not in result["safe_error"]
 
 

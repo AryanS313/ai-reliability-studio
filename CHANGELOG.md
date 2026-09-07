@@ -2,6 +2,14 @@
 
 All notable changes are documented here. The project follows semantic versioning for application and evaluator behavior.
 
+## Unreleased — public workflow repairs
+
+- Add guided sample, saved-answer import/review/export/resume, and live-evaluation paths while retaining advanced project tools.
+- Keep automatic checks separate from explicit source reviews, preserve AI-assisted attribution, and compare only the supplied replacement cases.
+- Isolate anonymous visitors in temporary per-session databases and require session-supplied keys. Explicit deletion clears that visitor's data and keys.
+- Repair constraint, citation, escalation, uncertainty, reporting, and calibration provenance handling. Evaluator `deterministic-v6` addresses scoped exemptions, epistemic abstentions, and unverified citation support; these are regression fixes, not a general accuracy claim.
+- Add a non-root container with a health check and CI startup verification. Community Cloud hibernation remains a host limitation; hosting guidance documents the separate always-running requirement.
+
 ## 1.0.0 — 2026-08-20
 
 ### Added

@@ -2,21 +2,30 @@ from __future__ import annotations
 
 from streamlit.testing.v1 import AppTest
 
-from src import database
+from src import config, database
 from src.storage import SQLiteRepository
 
 
-def test_streamlit_onboarding_and_target_setup_render_without_exceptions(tmp_path):
-    database.set_repository(SQLiteRepository(tmp_path / "ui.sqlite3"))
+def ui_repository(monkeypatch, path):
+    repository = SQLiteRepository(path)
+    monkeypatch.setattr(config, "AUTH_MODE", "single-user")
+    monkeypatch.setattr(config, "APP_ENV", "development")
+    monkeypatch.setattr(database, "repository_from_url", lambda: repository)
+    database.set_repository(repository)
+    return repository
+
+
+def test_streamlit_onboarding_and_target_setup_render_without_exceptions(tmp_path, monkeypatch):
+    ui_repository(monkeypatch, tmp_path / "ui.sqlite3")
     app = AppTest.from_file("app.py").run(timeout=30)
     assert not app.exception
     assert app.title[0].value == "AI Reliability Studio"
-    assert "Target Setup" in app.radio[0].options
-    assert "Evaluator Calibration" in app.radio[0].options
+    assert "Target Setup" in app.radio(key="page").options
+    assert "Evaluator Calibration" in app.radio(key="page").options
     app.button[0].click().run(timeout=30)
     assert not app.exception
     assert any("FinSure demo loaded" in message.value for message in app.success)
-    app.radio[0].set_value("Target Setup").run(timeout=30)
+    app.radio(key="page").set_value("Target Setup").run(timeout=30)
     assert not app.exception
     rendered = " ".join(item.value for item in [*app.markdown, *app.warning, *app.info])
     assert "Synthetic" in rendered
@@ -25,9 +34,8 @@ def test_streamlit_onboarding_and_target_setup_render_without_exceptions(tmp_pat
     assert str(tmp_path) not in all_visible
 
 
-def test_streamlit_settings_renders_audited_export_controls(tmp_path):
-    repository = SQLiteRepository(tmp_path / "exports-ui.sqlite3")
-    database.set_repository(repository)
+def test_streamlit_settings_renders_audited_export_controls(tmp_path, monkeypatch):
+    repository = ui_repository(monkeypatch, tmp_path / "exports-ui.sqlite3")
     context = repository.local_context()
     run_id = repository.create_run(
         context,
@@ -63,7 +71,7 @@ def test_streamlit_settings_renders_audited_export_controls(tmp_path):
         },
     )
     app = AppTest.from_file("app.py").run(timeout=30)
-    app.radio[0].set_value("Settings / Export").run(timeout=30)
+    app.radio(key="page").set_value("Settings / Export").run(timeout=30)
     assert not app.exception
     assert len(app.get("download_button")) == 3
     rendered = " ".join(item.value for item in [*app.markdown, *app.info])
@@ -74,10 +82,10 @@ def test_streamlit_settings_renders_audited_export_controls(tmp_path):
     assert "database path" not in rendered.lower()
 
 
-def test_streamlit_calibration_page_has_honest_empty_state(tmp_path):
-    database.set_repository(SQLiteRepository(tmp_path / "calibration-ui.sqlite3"))
+def test_streamlit_calibration_page_has_honest_empty_state(tmp_path, monkeypatch):
+    ui_repository(monkeypatch, tmp_path / "calibration-ui.sqlite3")
     app = AppTest.from_file("app.py").run(timeout=30)
-    app.radio[0].set_value("Evaluator Calibration").run(timeout=30)
+    app.radio(key="page").set_value("Evaluator Calibration").run(timeout=30)
     assert not app.exception
     rendered = " ".join(item.value for item in [*app.markdown, *app.warning, *app.info, *app.caption])
     assert "held-out" in rendered.lower()

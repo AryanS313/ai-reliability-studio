@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src import config, database
-from src.calibration import EvaluatorThresholdConfiguration, uncalibrated_status
+from src.calibration import EvaluatorThresholdConfiguration, uncalibrated_status, validate_calibration_for_run
 from src.datasets import (
     LEGACY_REQUIRED_FIELDS,
     DatasetValidationException,
@@ -108,8 +108,12 @@ def run_evaluation(
     dataset = normalize_eval_dataset(eval_df)
     threshold_configuration = threshold_configuration or EvaluatorThresholdConfiguration()
     calibration = calibration_result or uncalibrated_status(threshold_configuration)
-    if calibration.get("threshold_version") != threshold_configuration.version:
-        raise ValueError("Calibration result threshold version does not match this run's threshold configuration.")
+    validate_calibration_for_run(
+        calibration,
+        threshold_configuration,
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
+    )
     models = model_name if isinstance(model_name, list) else [model_name]
     vector_store = SimpleVectorStore()
     vector_store.build(chunks)
@@ -169,7 +173,15 @@ def run_evaluation(
                     "target_type": target_type,
                 }
             )
-            candidate_name = f"{prompt_name} · {target_name} · {selected_model}"
+            controls_model = target_type in {TargetType.FOUNDATION_MODEL.value, TargetType.SYNTHETIC.value}
+            configured_provider = (
+                config.provider_for_model(selected_model)
+                if target_type == TargetType.FOUNDATION_MODEL.value
+                else "synthetic"
+                if target_type == TargetType.SYNTHETIC.value
+                else None
+            )
+            candidate_name = f"{prompt_name} · {target_name}" + (f" · {selected_model}" if controls_model else "")
             retrieval_configuration = {
                 "top_k": top_k,
                 "similarity_threshold": similarity_threshold,
@@ -216,24 +228,28 @@ def run_evaluation(
                         "version": calibration.get("calibration_version"),
                         "status": calibration.get("status"),
                         "reviewed_cases": calibration.get("reviewed_cases", 0),
+                        "evaluator_version": calibration.get("evaluator_version"),
+                        "label_semantics_version": calibration.get("label_semantics_version"),
                     },
                 ],
                 model={
-                    "provider": config.provider_for_model(selected_model)
-                    if target_type == TargetType.FOUNDATION_MODEL.value
-                    else target_type,
-                    "identifier": selected_model,
-                    "temperature": 0.0,
+                    "provenance": "configured_runner_settings",
+                    "provider": configured_provider,
+                    "identifier": selected_model if controls_model else None,
+                    "configured_runner_model": selected_model,
+                    "runner_controls_model": controls_model,
+                    "observed_identity_location": "per_execution_result",
+                    "temperature": 0.0 if target_type == TargetType.FOUNDATION_MODEL.value else None,
                     "seed": 17 if target_type == TargetType.SYNTHETIC.value else None,
-                    "token_limit": 2048,
+                    "token_limit": 2048 if target_type == TargetType.FOUNDATION_MODEL.value else None,
                 },
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,
                 environment=environment,
             )
             run_id = database.create_eval_run(
-                run_name=f"{prompt_name} · {selected_model} · {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-                model_name=selected_model,
+                run_name=f"{candidate_name} · {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                model_name=selected_model if controls_model else "unknown",
                 mode=mode,
                 total_questions=len(dataset),
                 total_executions=len(dataset),
@@ -312,6 +328,26 @@ def run_evaluation(
                 )
                 result.update(
                     {
+                        "run_id": run_id,
+                        "manifest": manifest,
+                        "manifest_hash": manifest["manifest_hash"],
+                        "run_timestamp": manifest["created_at"],
+                        "environment": manifest["environment"],
+                        "dataset_version": dataset_hash,
+                        "document_versions": document_versions,
+                        "knowledge_base_version": version_hash(document_versions),
+                        "provider": response.provider if response else None,
+                        "model_name": response.model if response else None,
+                        "response_reported_provider": response.provider if response else None,
+                        "response_reported_model": response.model if response else None,
+                        "configured_runner_provider": configured_provider,
+                        "configured_runner_model": selected_model,
+                        "model_identity_provenance": "target_response"
+                        if response and (response.provider or response.model)
+                        else "not_reported",
+                        "human_review_status": "not_reviewed",
+                        "retrieval_metrics_scope": "evaluator_local_reference_retrieval",
+                        "client_retrieval_status": "not_measured",
                         "evaluator_version": EVALUATOR_VERSION,
                         "label_semantics_version": LABEL_SEMANTICS_VERSION,
                         "threshold_version": threshold_configuration.version,
@@ -422,7 +458,18 @@ def run_evaluation(
                         }
                     )
                     result["suggested_fix"] = suggestion_for_failure(result["failure_type"])
-                database.save_eval_result(run_id, result, context=context)
+                result["metadata"] = {
+                    **dict(result.get("metadata") or {}),
+                    "model_identity": {
+                        "provenance": result["model_identity_provenance"],
+                        "reported_provider": result["response_reported_provider"],
+                        "reported_model": result["response_reported_model"],
+                        "configured_runner_provider": configured_provider,
+                        "configured_runner_model": selected_model,
+                        "target_type": target_type,
+                    },
+                }
+                result["execution_id"] = database.save_eval_result(run_id, result, context=context)
                 all_results.append(result)
     return pd.DataFrame(all_results)
 
