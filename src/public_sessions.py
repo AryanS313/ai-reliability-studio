@@ -160,4 +160,11 @@ def initialize_session(
         f"It expires after {hours:g} hours of inactivity or a server restart. "
         "Export your work before leaving. Provider keys must be supplied in this session."
     )
+    if config.browser_runtime_enabled():
+        notice = (
+            "Your workspace stays in this tab's memory. Closing or reloading the tab clears it, "
+            f"as does returning after {hours:g} hours of inactivity. "
+            "Download your workspace to keep it and resume later. "
+            "Provider tests send the selected questions and sources using the key you enter."
+        )
     return SessionInitialization(session.repository, session.context, True, notice, created)

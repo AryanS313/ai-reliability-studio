@@ -23,7 +23,7 @@ from src.domain import ExecutionStatus, TargetType
 from src.evaluator import normalize_eval_dataset
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION, score_result
 from src.security import redact_pii, redact_secrets
-from src.versioning import version_hash
+from src.versioning import runtime_metadata, version_hash
 
 REVIEW_DECISIONS = {"supported", "failed", "inconclusive", "execution_error"}
 REVIEWER_KINDS = {"ai_assisted", "human"}
@@ -179,6 +179,7 @@ def evaluate_saved_responses(
         "schema_version": "saved-response-review-v1",
         "created_at": imported_at,
         "environment": "offline_review",
+        "runtime": runtime_metadata(),
         "evidence_kind": evidence_kind,
         "target": {"type": TargetType.SAVED_RESPONSES.value, "name": target_name, "version": target_version},
         "capture": {"reported_at": captured, "independently_verified": False},

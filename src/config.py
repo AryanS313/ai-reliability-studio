@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import date
 from pathlib import Path
 from typing import TypedDict
@@ -15,7 +16,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_RELEASE = "2026.09.07.1"
+APP_RELEASE = "2026.09.07.2"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -164,6 +165,11 @@ def api_key_for_provider(provider: str) -> str:
 def public_sessions_enabled() -> bool:
     """Explicit anonymous mode; it never weakens the normal production auth mode."""
     return AUTH_MODE == "public-session"
+
+
+def browser_runtime_enabled() -> bool:
+    """Browser Python is isolated from every native server configuration."""
+    return sys.platform == "emscripten"
 
 
 def provider_for_model(model_name: str) -> str:

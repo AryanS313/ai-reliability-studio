@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,41 @@ def version_hash(value: Any) -> str:
 
 def text_hash(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def runtime_metadata() -> dict[str, Any]:
+    runtime: dict[str, Any] = {"python": platform.python_version(), "platform": platform.platform()}
+    if sys.platform == "emscripten":
+        from importlib.metadata import PackageNotFoundError, version
+
+        packages = {}
+        for name in (
+            "numpy",
+            "pandas",
+            "scipy",
+            "scikit-learn",
+            "pydantic",
+            "httpx",
+            "openai",
+            "anthropic",
+            "google-genai",
+        ):
+            try:
+                packages[name] = version(name)
+            except PackageNotFoundError:
+                packages[name] = None
+        runtime.update(
+            {
+                "execution": "browser-sequential-v1",
+                "browser_adapter": "browser-runtime-v1",
+                "pyodide": "0.26.4",
+                "stlite": "0.76.0",
+                "packages": packages,
+                "source_snapshot_sha256": os.getenv("STUDIO_BROWSER_SOURCE_SHA256"),
+                "provider_transport": "direct-browser-fetch-v1",
+            }
+        )
+    return runtime
 
 
 def git_commit(root: str | Path | None = None) -> str | None:
@@ -60,7 +96,7 @@ def build_run_manifest(
         "git_commit": git_commit(Path(__file__).resolve().parents[1]),
         "created_at": datetime.now(UTC).isoformat(),
         "environment": environment or os.getenv("APP_ENV", "development"),
-        "runtime": {"python": platform.python_version(), "platform": platform.platform()},
+        "runtime": runtime_metadata(),
         "user_id": user_id,
         "workspace_id": workspace_id,
         "prompt": {**prompt, "content_hash": prompt.get("content_hash") or version_hash(prompt)},

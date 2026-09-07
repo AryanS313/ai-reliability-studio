@@ -28,6 +28,8 @@ jobs:
       - run: ruff format --check .
       - run: mypy src
       - run: pytest
+      - name: Verify pinned browser dependency builder
+        run: python -m unittest discover -s browser_runtime/dependencies -p 'test_*.py' -v
       - name: Verify synthetic workflow is explicitly blocked from launch
         shell: bash
         run: |
@@ -53,6 +55,33 @@ jobs:
           path: |
             coverage.xml
             synthetic-workflow-report.json
+
+  browser-build:
+    name: Browser distribution build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: browser_site/package-lock.json
+      - name: Build pinned runtime assets
+        working-directory: browser_site
+        run: |
+          python ../browser_runtime/dependencies/build_dependencies.py --output .build/browser-vendor --cache .cache/browser-dependencies
+          python scripts/assemble-runtime.py --source ..
+      - name: Check and build the web wrapper
+        working-directory: browser_site
+        run: |
+          npm ci
+          npm run lint
+          npx tsc --noEmit
+          npm run build
 
   postgres-integration:
     name: PostgreSQL migration and RLS
