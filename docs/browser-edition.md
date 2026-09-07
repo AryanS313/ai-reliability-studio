@@ -10,12 +10,14 @@ Work lives in the tab's memory, including the temporary SQLite workspace. There 
 
 Restoring a workspace recalculates automatic checks with the current evaluator and then reapplies compatible reviews bound to the supplied case, answer and sources. Reviewer identity, review method, notes and timestamps remain explicit. Automatic checks are advisory; importing, restoring or obtaining a passing automatic score does not itself create a human review. See the [evaluation methodology](EVALUATION_METHODOLOGY.md) for label semantics, uncertainty and calibration limits.
 
-Use desktop Chrome for the browser path covered by the current local tests. The provider bridge requires WebAssembly workers, `SharedArrayBuffer`, `Atomics.wait`, a secure context and cross-origin isolation. The host must serve the document and worker assets with the applicable policies, including:
+Use desktop Chrome for the browser path covered by the current local tests. The provider bridge requires WebAssembly workers, `SharedArrayBuffer`, `Atomics.wait`, a secure context and cross-origin isolation. The host must serve the document with these policies:
 
 ```http
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
+
+The two runtime workers use Blob module entry points that inherit the document's isolation policy and import only their fixed same-origin scripts. This supports static hosts that do not preserve custom headers on asset responses. The temporary entry URLs are revoked after startup, on error, or when leaving the page. Imported runtime files remain normal cacheable static assets.
 
 Use HTTPS for a public deployment; the local development server can use localhost HTTP. Check that `crossOriginIsolated` is true in both the page and worker. Missing isolation must produce a startup error rather than silently enabling another transport. Opening the HTML directly as a local file is not the supported serving path. These requirements follow the browser's [shared-memory security model](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer#security_requirements). They do not establish that a particular hosting deployment supplies the required headers.
 

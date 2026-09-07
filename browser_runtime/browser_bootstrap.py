@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import importlib.util
+import json
 import sys
 import types
 from urllib.parse import urlsplit
@@ -61,7 +62,19 @@ async def prepare_browser_provider_runtime(worker_url: str) -> None:
     ):
         raise RuntimeError("Browser provider worker must be the shipped same-origin asset.")
     install_nonstreaming_jiter_guard()
-    worker = js.Worker.new(worker_url)
+    # Inherit this worker's isolation policy even when the static host omits
+    # COEP headers on scripts. Only the validated, same-origin module is loaded.
+    entry = js.URL.createObjectURL(
+        js.Blob.new(
+            to_js([f"import {json.dumps(worker_url)};"]),
+            to_js({"type": "text/javascript"}, dict_converter=js.Object.fromEntries),
+        )
+    )
+    try:
+        worker = js.Worker.new(entry, to_js({"type": "module"}, dict_converter=js.Object.fromEntries))
+    except BaseException:
+        js.URL.revokeObjectURL(entry)
+        raise
     ready = asyncio.get_running_loop().create_future()
 
     def onmessage(event):
@@ -88,6 +101,7 @@ async def prepare_browser_provider_runtime(worker_url: str) -> None:
         worker.terminate()
         raise
     finally:
+        js.URL.revokeObjectURL(entry)
         worker.removeEventListener("message", message_proxy)
         worker.removeEventListener("error", error_proxy)
         message_proxy.destroy()
