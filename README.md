@@ -1,8 +1,10 @@
 # AI Reliability Studio
 
-[**Open the live Streamlit demo →**](https://ai-reliability-studio.streamlit.app/)
+[**Open AI Reliability Studio →**](https://ai-reliability-studio.a3103.chatgpt.site/)
 
-> Start with **Try sample** or **Review saved answers**; neither needs an API key. Public workspaces are private to a browser session and temporary. Download your workspace before leaving. The Streamlit Community Cloud host can hibernate after inactivity; see [hosting options](docs/HOSTING_OPTIONS.md).
+> Start with **Try sample** or **Review saved answers**; neither needs an API key. The browser edition runs in your tab without a sleeping Streamlit server. The first load downloads a substantial runtime. Work is temporary: download your workspace before leaving, closing or reloading. See [browser requirements and supported features](docs/browser-edition.md).
+
+The [Streamlit fallback](https://ai-reliability-studio.streamlit.app/) remains available and can hibernate after inactivity. For a persistent native server deployment, see [hosting options](docs/HOSTING_OPTIONS.md).
 
 AI Reliability Studio helps review AI assistants against versioned questions, source documents, saved answers, and real target APIs. It keeps source evidence, returned citations/actions, review decisions, and replacement comparisons together. Automatic checks are advisory and can be wrong or uncertain; the app does not certify launch readiness.
 
@@ -17,6 +19,8 @@ AI Reliability Studio helps review AI assistants against versioned questions, so
 - Saved answers start pending review. Decisions carry reviewer attribution and hashes of the answer, case, and source packet. AI-assisted reviews remain labeled as such. A partial retest reports only the cases actually supplied.
 
 ## Capabilities
+
+The list below covers the native application. The browser edition supports saved-answer reviews and the six configured model-provider choices, uses sequential execution, and disables arbitrary external HTTP connections. Its [runtime and storage limits](docs/browser-edition.md) apply.
 
 - Three target types: deterministic synthetic scenarios, direct foundation-model providers, and versioned external HTTP APIs.
 - External target templates with secret references, authentication headers, JSON response paths, citation/escalation/tool-call mappings, timeouts, rate-limit handling, and health checks.
