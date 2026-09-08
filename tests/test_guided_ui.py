@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -201,6 +202,72 @@ def test_public_settings_ignore_server_credentials_and_end_session_clears_ui(pri
     assert not app.exception
     assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
     assert next(button for button in app.button if button.label == "Resume review").disabled
+
+
+def test_home_resume_panel_remains_open_across_reruns_until_leaving_flow(private_ui):
+    app = private_ui()
+    app.button(key="start_resume").click().run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    # An upload triggers a full rerun. Rendering the panel must not consume its state.
+    app.run(timeout=30)
+    assert not app.exception
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    assert app.session_state["_show_resume_workspace"] is True
+    app.radio(key="page").set_value("Overview").run(timeout=30)
+    assert "_show_resume_workspace" not in app.session_state
+    app.button(key="start_saved").click().run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and not widget.proto.expanded for widget in app.expander)
+
+
+@pytest.mark.parametrize("valid", [False, True])
+@pytest.mark.parametrize("existing", [False, True])
+def test_resume_upload_keeps_panel_open_until_successful_restore(private_ui, monkeypatch, valid, existing):
+    import streamlit as st
+
+    app = private_ui()
+    if existing:
+        app.button(key="start_sample").click().run(timeout=30)
+        previous = deepcopy(app.session_state["offline_workspace"])
+        app.button(key="return_to_start").click().run(timeout=30)
+    app.button(key="start_resume").click().run(timeout=30)
+    if existing:
+        assert app.session_state["offline_workspace"] == previous
+        assert any(button.key == "cancel_resume" for button in app.button)
+    incoming = sample_review_workspace()
+    incoming["target_name"] = "Restored workspace fixture"
+    uploaded = BytesIO(json.dumps(incoming if valid else {}).encode())
+    original_uploader = st.file_uploader
+
+    def uploaded_workspace(*args, **kwargs):
+        if kwargs.get("key") == "resume_saved_workspace":
+            return uploaded
+        return original_uploader(*args, **kwargs)
+
+    # AppTest has no upload interaction; supply the uploader's returned bytes and
+    # exercise the same full app rerun and actual Resume review button callback.
+    monkeypatch.setattr(st, "file_uploader", uploaded_workspace)
+    app.run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    resume = next(button for button in app.button if button.label == "Resume review")
+    assert not resume.disabled
+    resume.click().run(timeout=30)
+    assert not app.exception
+    if valid:
+        assert "_show_resume_workspace" not in app.session_state
+        assert len(app.session_state["offline_baseline"]) == 3
+        assert app.session_state["offline_workspace"]["target_name"] == incoming["target_name"]
+        assert any("Workspace restored" in message.value for message in app.success)
+    else:
+        assert app.session_state["_show_resume_workspace"] is True
+        assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+        assert any("restore this workspace" in error.value for error in app.error)
+        if existing:
+            assert app.session_state["offline_workspace"] == previous
+            app.button(key="cancel_resume").click().run(timeout=30)
+            assert not app.exception
+            assert "_show_resume_workspace" not in app.session_state
+            assert app.session_state["offline_workspace"] == previous
+            assert len(app.get("download_button")) >= 4
 
 
 def test_resume_refuses_stale_reviews_and_unknown_replacement_cases():
