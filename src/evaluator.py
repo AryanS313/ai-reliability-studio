@@ -19,6 +19,7 @@ from src.datasets import (
     strict_bool,
     validate_dataset_frame,
 )
+from src.document_loader import source_extraction_warnings
 from src.domain import ExecutionStatus, TargetType
 from src.execution import CancellationToken, ExecutionEngine, ExecutionPolicy
 from src.judges import LLMJudge
@@ -26,6 +27,7 @@ from src.retrieval import retrieval_metrics, retrieve_chunks
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION, score_result
 from src.suggestions import suggestion_for_failure
 from src.targets import (
+    ExternalHTTPTarget,
     FoundationModelConfig,
     FoundationModelTarget,
     MockTargetConfig,
@@ -48,15 +50,15 @@ def read_eval_dataset(filename: str, data: bytes) -> pd.DataFrame:
     suffix = Path(filename).suffix.lower()
     buffer = BytesIO(data)
     if suffix == ".csv":
-        frame = pd.read_csv(buffer)
+        frame = pd.read_csv(buffer, dtype=str, keep_default_na=False)
     elif suffix == ".tsv":
-        frame = pd.read_csv(buffer, sep="\t")
+        frame = pd.read_csv(buffer, sep="\t", dtype=str, keep_default_na=False)
     elif suffix in {".xlsx", ".xls"}:
-        frame = pd.read_excel(buffer)
+        frame = pd.read_excel(buffer, dtype=str, keep_default_na=False)
     elif suffix == ".json":
-        frame = pd.read_json(buffer)
+        frame = pd.read_json(buffer, dtype=False, convert_dates=False)
     elif suffix == ".jsonl":
-        frame = pd.read_json(buffer, lines=True)
+        frame = pd.read_json(buffer, lines=True, dtype=False, convert_dates=False)
     else:
         raise ValueError(f"Unsupported evaluation dataset type: {suffix or 'no extension'}")
     if len(frame) > config.MAX_DATASET_ROWS:
@@ -97,7 +99,7 @@ def run_evaluation(
     target_adapter: TargetAdapter | None = None,
     cancellation_token: CancellationToken | None = None,
     max_concurrency: int = 4,
-    max_retries: int = 2,
+    max_retries: int | None = None,
     metric_weights: dict[str, float] | None = None,
     environment: str | None = None,
     judge_evaluator: LLMJudge | None = None,
@@ -146,6 +148,15 @@ def run_evaluation(
 
     for selected_model in models:
         adapter = target_adapter or _adapter_for_model(selected_model, api_key)
+        effective_retries = adapter.default_retry_count if max_retries is None else max_retries
+        if isinstance(adapter, ExternalHTTPTarget):
+            applies_prompt = adapter.sends_system_prompt
+            if len(prompts) > 1 and not applies_prompt:
+                raise ValueError(
+                    "This external target's request template does not send ${system_prompt}. "
+                    "Run one prompt, add the placeholder for an endpoint that accepts it, or compare saved answers "
+                    "from separately deployed assistant versions."
+                )
         target_type = adapter.target_type.value
         target_configuration = _target_storage_configuration(adapter)
         target_version_id = repository.create_target_version(
@@ -197,9 +208,41 @@ def run_evaluation(
                     "case_count": len(dataset),
                     "quality_report": dataset_quality,
                 },
-                documents=[{"version": value} for value in document_versions],
+                documents=[
+                    {
+                        "version": value,
+                        "extraction_notices": source_extraction_warnings(
+                            [
+                                chunk
+                                for chunk in chunks
+                                if str(
+                                    chunk.get("document_hash")
+                                    or chunk.get("document_version")
+                                    or chunk.get("document_id")
+                                    or "legacy"
+                                )
+                                == value
+                            ]
+                        ),
+                    }
+                    for value in document_versions
+                ],
                 retrieval=retrieval_configuration,
-                target={"type": target_type, "version": adapter.version, "version_id": target_version_id},
+                target={
+                    "type": target_type,
+                    "version": adapter.version,
+                    "version_id": target_version_id,
+                    "execution_policy": {"max_concurrency": max_concurrency, "max_retries": effective_retries},
+                    "system_prompt_application": (
+                        "external_request_template" if applies_prompt else "not_sent_to_external_target"
+                    )
+                    if isinstance(adapter, ExternalHTTPTarget)
+                    else "provider_system_instruction"
+                    if isinstance(adapter, FoundationModelTarget)
+                    else "ignored_by_synthetic_fixture"
+                    if isinstance(adapter, SyntheticMockTarget)
+                    else "adapter_defined",
+                },
                 evaluators=[
                     {
                         "name": "deterministic_rules",
@@ -312,7 +355,7 @@ def run_evaluation(
 
             engine = ExecutionEngine(
                 adapter,
-                ExecutionPolicy(max_concurrency=max_concurrency, max_retries=max_retries),
+                ExecutionPolicy(max_concurrency=max_concurrency, max_retries=effective_retries),
             )
 
             progress_base = completed_steps
@@ -341,6 +384,9 @@ def run_evaluation(
                 result.update(
                     {
                         "run_id": run_id,
+                        "attempt_count": record.attempt_count,
+                        "cache_hit": record.cache_hit,
+                        "execution_key": record.execution_key,
                         "manifest": manifest,
                         "manifest_hash": manifest["manifest_hash"],
                         "run_timestamp": manifest["created_at"],
@@ -472,6 +518,12 @@ def run_evaluation(
                     result["suggested_fix"] = suggestion_for_failure(result["failure_type"])
                 result["metadata"] = {
                     **dict(result.get("metadata") or {}),
+                    "execution": {
+                        "attempt_count": record.attempt_count,
+                        "cache_hit": record.cache_hit,
+                        "execution_key": record.execution_key,
+                        "max_retries": effective_retries,
+                    },
                     "model_identity": {
                         "provenance": result["model_identity_provenance"],
                         "reported_provider": result["response_reported_provider"],
@@ -547,6 +599,8 @@ def _target_storage_configuration(adapter: TargetAdapter) -> dict[str, Any]:
     if hasattr(configuration, "__dataclass_fields__"):
         stored = target_configuration_for_storage(configuration)
         stored["version_hash"] = adapter.version
+        if implementation := getattr(adapter, "implementation_version", None):
+            stored["adapter_implementation_version"] = implementation
         return stored
     return {"adapter": type(adapter).__name__, "version_hash": adapter.version}
 

@@ -64,6 +64,20 @@ const observer=new MutationObserver(()=>{
   if(!ready && [...root.querySelectorAll('button')].some(button=>button.textContent.includes('Try sample'))){ready=true;panel.hidden=true;root.hidden=false;}
 });
 observer.observe(root,{childList:true,subtree:true});
+// On narrow screens the sidebar covers the page. Finish navigation by
+// dismissing that overlay, so the newly selected page is usable immediately.
+const closeMobileMenu=()=>{
+  if(window.matchMedia('(max-width: 768px)').matches){
+    root.querySelector('[data-testid="stSidebarCollapseButton"] button')?.click();
+  }
+};
+root.addEventListener('change',event=>{
+  if(event.target instanceof HTMLInputElement && event.target.type==='radio' && event.target.closest('[data-testid="stSidebar"]'))closeMobileMenu();
+});
+root.addEventListener('click',event=>{
+  const button=event.target instanceof Element ? event.target.closest('[data-testid="stSidebar"] button') : null;
+  if(button?.textContent.trim()==='End session and clear my data')closeMobileMenu();
+});
 const url=path=>new URL(base+path,location.origin).href;
 try{
   if(!window.crossOriginIsolated || typeof SharedArrayBuffer==='undefined'){

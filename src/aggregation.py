@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from src.domain import SYNTHETIC_EVIDENCE_NOTICE, ExecutionStatus, TargetType
+from src.presentation import retry_summary
 from src.versioning import version_hash
 
 
@@ -393,7 +394,7 @@ def bootstrap_confidence_interval(
     return round(means[int(samples * 0.025)], 4), round(means[min(samples - 1, int(samples * 0.975))], 4)
 
 
-def _counts(df: pd.DataFrame) -> dict[str, int]:
+def _counts(df: pd.DataFrame) -> dict[str, Any]:
     if df.empty:
         return {
             "unique_test_cases": 0,
@@ -415,9 +416,7 @@ def _counts(df: pd.DataFrame) -> dict[str, int]:
     quality_pass = df.get("failure_type", pd.Series(["Passed"] * len(df), index=df.index)).eq("Passed")
     successful_status = statuses.isin({ExecutionStatus.PASSED.value, "completed", "success"})
     passed = int((successful_status & quality_pass).sum())
-    attempts = pd.to_numeric(df.get("attempt_count", pd.Series([1] * len(df), index=df.index)), errors="coerce").fillna(
-        1
-    )
+    retry_counts = retry_summary(df)
     return {
         "unique_test_cases": int(df[unique_col].nunique()),
         "total_executions": len(df),
@@ -429,7 +428,9 @@ def _counts(df: pd.DataFrame) -> dict[str, int]:
         "quality_failed_executions": int((successful_status & ~quality_pass).sum()),
         "cancelled_executions": int(statuses.eq(ExecutionStatus.CANCELLED.value).sum()),
         "skipped_executions": int(statuses.eq("skipped").sum()),
-        "retry_count": int(attempts.sub(1).clip(lower=0).sum()),
+        "retry_count": retry_counts["retries"],
+        "observed_retry_count": retry_counts["observed_retries"],
+        "attempt_counts_unknown": retry_counts["attempt_counts_unknown"],
     }
 
 

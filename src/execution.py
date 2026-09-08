@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -36,10 +37,21 @@ class ExecutionPolicy:
     cache_enabled: bool = True
 
     def __post_init__(self) -> None:
-        if not 1 <= self.max_concurrency <= 64:
+        if (
+            isinstance(self.max_concurrency, bool)
+            or not isinstance(self.max_concurrency, int)
+            or not 1 <= self.max_concurrency <= 64
+        ):
             raise ValueError("max_concurrency must be between 1 and 64")
-        if not 0 <= self.max_retries <= 10:
+        if (
+            isinstance(self.max_retries, bool)
+            or not isinstance(self.max_retries, int)
+            or not 0 <= self.max_retries <= 10
+        ):
             raise ValueError("max_retries must be between 0 and 10")
+        for value in (self.backoff_seconds, self.maximum_backoff_seconds):
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+                raise ValueError("Retry backoff limits must be finite nonnegative numbers")
 
 
 @dataclass
@@ -106,7 +118,7 @@ class ExecutionEngine:
         checkpoint: Callable[[ExecutionRecord], None] | None = None,
     ) -> None:
         self.target = target
-        self.policy = policy or ExecutionPolicy()
+        self.policy = policy or ExecutionPolicy(max_retries=target.default_retry_count)
         self.cache = cache or ExecutionCache()
         self.sleep = sleep
         self.checkpoint = checkpoint
@@ -221,9 +233,24 @@ class ExecutionEngine:
             if response.status == ExecutionStatus.PASSED:
                 self.cache.set(record.execution_key, response)
                 break
-            if response.status not in RETRYABLE_STATUSES or attempt >= self.policy.max_retries:
+            if (
+                response.status not in RETRYABLE_STATUSES
+                or response.metadata.get("retryable") is False
+                or attempt >= self.policy.max_retries
+            ):
                 break
             delay = min(self.policy.maximum_backoff_seconds, self.policy.backoff_seconds * (2**attempt))
+            retry_after = response.metadata.get("retry_after_seconds")
+            if (
+                isinstance(retry_after, int | float)
+                and not isinstance(retry_after, bool)
+                and math.isfinite(retry_after)
+                and retry_after >= 0
+            ):
+                if retry_after > self.policy.maximum_backoff_seconds:
+                    record.metadata["retry_suppressed"] = "retry_after_exceeds_wait_limit"
+                    break
+                delay = max(delay, retry_after)
             self.sleep(delay)
         record.completed_at = time.time()
         self._save_checkpoint(record)

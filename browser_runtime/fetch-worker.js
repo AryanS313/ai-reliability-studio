@@ -87,7 +87,10 @@ self.onmessage = async ({data}) => {
       // Preserve the status and bounded numeric retry delay, never their text.
       if (response.body) await response.body.cancel();
       const retry = response.headers.get('retry-after');
-      const retryAfter = retry !== null && /^\d{1,3}$/.test(retry) && Number(retry) <= 600 ? Number(retry) : -1;
+      // -1 means absent; -2 preserves an unusable wait without exposing it.
+      // The Python adapter suppresses retries rather than ignoring a longer
+      // provider delay or an unsupported HTTP-date Retry-After value.
+      const retryAfter = retry === null ? -1 : /^\d{1,3}$/.test(retry.trim()) && Number(retry) <= 600 ? Number(retry) : -2;
       const body = new TextEncoder().encode(JSON.stringify({error:{message:'Provider request failed.',type:'browser_provider_error',code:'http_error'}}));
       notify(control, bytes, 1, body, response.status, retryAfter);
       return;

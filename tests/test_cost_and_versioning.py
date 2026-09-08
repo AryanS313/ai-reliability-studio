@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from src import config
 from src.versioning import build_run_manifest, text_hash, version_hash
 
@@ -16,6 +18,29 @@ def test_known_model_cost_includes_auditable_pricing_provenance():
     assert detail["cost"] == 0.00075
     assert detail["pricing_source"].startswith("https://developers.openai.com/")
     assert detail["pricing_effective_date"] == "2026-08-20"
+
+
+def test_sonnet_standard_rate_does_not_expire_after_cancelled_price_increase(monkeypatch):
+    class SeptemberDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 8)
+
+    monkeypatch.setattr(config, "date", SeptemberDate)
+    detail = config.estimate_cost_detail("claude-sonnet-5", 1000, 1000)
+    assert detail["cost"] == 0.012
+    assert detail["pricing_expires_on"] is None
+    assert detail["warning"] is None
+    assert detail["pricing_effective_date"] == "2026-09-08"
+
+
+def test_expiry_guard_still_applies_to_an_explicitly_temporary_price(monkeypatch):
+    monkeypatch.setitem(
+        config.TOKEN_PRICING_PER_1K,
+        "temporary-fixture-model",
+        {"input": 0.002, "output": 0.01, "effective_date": "2020-01-01", "expires_on": "2020-01-02"},
+    )
+    assert "expired on 2020-01-02" in config.estimate_cost_detail("temporary-fixture-model", 1000, 1000)["warning"]
 
 
 def test_version_hashes_are_deterministic_and_sensitive():

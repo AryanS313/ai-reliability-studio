@@ -12,6 +12,19 @@ from src.suggestions import suggestion_for_failure
 SUCCESS_STATUSES = {"passed", "completed", "success"}
 
 
+def retry_summary(df: pd.DataFrame) -> dict[str, Any]:
+    """Separate observed retries from unknown historical or imported attempt counts."""
+    attempts = pd.to_numeric(df.get("attempt_count", pd.Series(index=df.index, dtype=float)), errors="coerce")
+    known = attempts.notna() & attempts.ge(0) & attempts.mod(1).eq(0)
+    observed = int(attempts[known].sub(1).clip(lower=0).sum())
+    return {
+        "retries": observed if known.all() else None,
+        "observed_retries": observed,
+        "attempt_counts_recorded": int(known.sum()),
+        "attempt_counts_unknown": int((~known).sum()),
+    }
+
+
 def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
     """Return consistent run counts and context-sensitive completion wording."""
     if df.empty:
@@ -35,10 +48,8 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
     cancelled = int(statuses.eq("cancelled").sum())
     skipped = int(statuses.eq("skipped").sum())
     infrastructure = int((~quality_mask & ~statuses.isin({"cancelled", "skipped"})).sum())
-    attempts = pd.to_numeric(df.get("attempt_count", pd.Series([1] * len(df), index=df.index)), errors="coerce").fillna(
-        1
-    )
-    retries = int(attempts.sub(1).clip(lower=0).sum())
+    retry_counts = retry_summary(df)
+    retries = retry_counts["retries"]
     unique_column = "case_id" if "case_id" in df else "question"
     counts: dict[str, Any] = {
         "unique_test_cases": int(df[unique_column].nunique()) if unique_column in df else len(df),
@@ -49,7 +60,7 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
         "infrastructure_errors": infrastructure,
         "cancelled_executions": cancelled,
         "skipped_executions": skipped,
-        "retries": retries,
+        **retry_counts,
     }
     parts = [f"Run complete: {len(df)} total executions"]
     if quality_mask.all():
@@ -66,6 +77,8 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
         parts.append(f"{skipped} skipped")
     if retries:
         parts.append(f"{retries} retries")
+    elif retries is None:
+        parts.append("retry totals were not recorded for every execution")
     counts["message"] = "; ".join(parts) + "."
     return counts
 

@@ -53,6 +53,7 @@ from src.ui_workflows import (
     sample_replacements,
     sample_review_workspace,
     save_case_review,
+    source_extraction_warnings,
     starter_pack,
     utc_now_text,
 )
@@ -808,6 +809,9 @@ def render_overview() -> None:
         )
         if st.button("Review saved answers", use_container_width=True, key="start_saved"):
             navigate_to("Review saved answers")
+        if st.button("Resume a review", use_container_width=True, key="start_resume"):
+            st.session_state._show_resume_workspace = True
+            navigate_to("Review saved answers")
     with c3, st.container(border=True):
         st.subheader("Collect new answers")
         if external_connections_available():
@@ -837,6 +841,20 @@ def render_overview() -> None:
 
 
 def render_saved_import() -> None:
+    with st.expander("Resume a saved workspace", expanded=st.session_state.pop("_show_resume_workspace", False)):
+        st.caption(
+            "Upload the workspace file you downloaded earlier to continue with its sources, answers and reviews."
+        )
+        saved = st.file_uploader("Workspace file exported by this app", type=["json"], key="resume_saved_workspace")
+        if st.button("Resume review", disabled=saved is None):
+            try:
+                install_review_workspace(read_review_workspace(saved.getvalue()))
+                navigate_to(
+                    "Review saved answers",
+                    "Workspace restored. Existing review hashes were checked against its inputs.",
+                )
+            except Exception as exc:
+                workflow_error(exc, "restore this workspace")
     st.subheader("1. Add your files")
     st.write("Use a question file with expected answers, the source documents, and the assistant's saved answers.")
     st.download_button("Download starter files", starter_pack(), "saved-answer-starter.zip", "application/zip")
@@ -919,17 +937,6 @@ def render_saved_import() -> None:
                 navigate_to("Review saved answers", f"Imported {len(responses)} answers. Each is pending your review.")
             except Exception as exc:
                 workflow_error(exc)
-    with st.expander("Resume a saved workspace"):
-        saved = st.file_uploader("Workspace file exported by this app", type=["json"], key="resume_saved_workspace")
-        if st.button("Resume review", disabled=saved is None):
-            try:
-                install_review_workspace(read_review_workspace(saved.getvalue()))
-                navigate_to(
-                    "Review saved answers",
-                    "Workspace restored. Existing review hashes were checked against its inputs.",
-                )
-            except Exception as exc:
-                workflow_error(exc, "restore this workspace")
 
 
 def render_saved_case_review(workspace: dict, batch: str, frame: pd.DataFrame) -> None:
@@ -1112,6 +1119,15 @@ def render_saved_answers() -> None:
         return
     baseline = st.session_state.offline_baseline
     candidate = st.session_state.offline_candidate
+    extraction_notices = source_extraction_warnings(workspace["sources"])
+    if extraction_notices:
+        st.warning(
+            "Some source content needs an extraction check. Open the original documents before deciding whether "
+            "an answer is supported; the imported passages may be incomplete. These notices stay in your exports."
+        )
+        with st.expander("Source extraction notices", expanded=True):
+            for notice in extraction_notices:
+                st.text(notice)
     if workspace["evidence_kind"] == "fixture":
         st.info(
             "Fictional sample · These answers were authored to demonstrate the workflow. They are not customer or model performance evidence."
@@ -1166,7 +1182,13 @@ def render_saved_answers() -> None:
 
 def render_live_assistant() -> None:
     st.title("Evaluate live assistant")
-    st.caption("Prepare sources and questions, connect your assistant, then inspect the returned answers.")
+    st.caption("Prepare sources and questions, collect new answers, then inspect the evidence.")
+    if not external_connections_available():
+        st.info(
+            "This public app can generate answers with a model provider using Studio's source retrieval. "
+            "To check your deployed support or RAG assistant, collect its answers and choose Review saved answers. "
+            "That workflow preserves the actual answers from your assistant."
+        )
     steps = ["1. Sources", "2. Questions", "3. Connect and run", "4. Results"]
     requested = st.session_state.pop("_next_live_step", None)
     if requested in steps:
@@ -1594,7 +1616,7 @@ def external_target_from_state() -> ExternalHTTPTarget:
         request_template=dict(values.get("request_template") or {"input": "${question}"}),
         response_mappings=dict(values.get("response_mappings") or {"answer": "$.answer"}),
         timeout_seconds=float(values.get("timeout_seconds") or 30.0),
-        retry_count=int(values.get("retry_count") or 2),
+        retry_count=int(values.get("retry_count", 2)),
         streaming=bool(values.get("streaming", False)),
         health_check_path=values.get("health_check_path") or None,
     )
@@ -1689,6 +1711,8 @@ def render_target_setup() -> None:
             response = external_target_from_state().health_check()
             if response.status.value == "passed":
                 st.success(f"Health check passed (HTTP {response.http_status or 'not returned'}).")
+            elif response.metadata.get("network_checked") is False:
+                st.info(response.safe_error or "No health check was sent. Configure a health-check path first.")
             else:
                 st.error(response.safe_error or "Health check failed.")
         except Exception as exc:
@@ -1751,6 +1775,10 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             "workflow demonstrations and cannot establish that one prompt is better."
         )
     elif target_kind == "Direct foundation model":
+        st.caption(
+            "This tests the selected model with Studio's prompt and retrieved source passages. "
+            "It does not exercise your deployed assistant's retrieval, tools or application behavior."
+        )
         direct_models = [item for item in model_options() if item != "mock-model"]
         if not direct_models:
             st.error(f"No {st.session_state.api_provider} key is configured. Add your session key in Settings.")
@@ -1773,6 +1801,14 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             try:
                 target_adapter = external_target_from_state()
                 st.success(f"External target configured. Version {target_adapter.version[:12]}.")
+                if not target_adapter.sends_system_prompt:
+                    st.info(
+                        "This endpoint uses its own deployed prompt; the request template does not send Studio's "
+                        "system prompt. To compare deployed versions, collect their answers and use saved-answer review."
+                    )
+                    if mode == "Current Prompt vs Improved Prompt":
+                        st.warning("Choose Current Prompt Only. This endpoint is not configured for prompt comparison.")
+                        ready = False
             except Exception as exc:
                 st.error(f"Configure the external target on Target Setup before running: {exc}")
                 ready = False
@@ -1804,7 +1840,11 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             c1.caption("Browser runs process one answer at a time.")
         else:
             max_concurrency = c1.slider("Concurrency", 1, 16, 4)
-        max_retries = c2.slider("Retryable-error retries", 0, 5, 2)
+        if target_adapter is not None:
+            max_retries = target_adapter.default_retry_count
+            c2.caption(f"Retryable-error retries: {max_retries} · configured in Target Setup.")
+        else:
+            max_retries = c2.slider("Retryable-error retries", 0, 5, 2)
         candidate_tuned_on_dataset = st.checkbox(
             "A candidate in this run was tuned using cases from this dataset",
             help="If selected, the dataset must contain an explicit tuning_disclosure before it can support a launch verdict.",

@@ -169,6 +169,10 @@ class BrowserFetchTransport(httpx.BaseTransport):
             response_headers = {"content-type": "application/json"}
             if 0 <= retry_after <= 600:
                 response_headers["retry-after"] = str(retry_after)
+            elif retry_after == -2:
+                # Safe sentinel, not the raw provider header. The common
+                # provider adapter suppresses waits outside its accepted range.
+                response_headers["retry-after"] = "601"
             content = bytes(data.slice(0, length).to_py())
             return httpx.Response(status, headers=response_headers, content=content, request=request)
         except (httpx.HTTPError, KeyboardInterrupt, SystemExit):

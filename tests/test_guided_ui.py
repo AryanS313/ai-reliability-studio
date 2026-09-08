@@ -162,6 +162,26 @@ def test_live_path_keeps_existing_tools_and_never_defaults_to_synthetic(private_
     assert not any(button.label == "Check connection" for button in app.button)
 
 
+def test_saved_review_keeps_source_extraction_notice_visible_and_in_reports(private_ui):
+    from src.reporting import json_report
+
+    app = private_ui()
+    app.button(key="start_sample").click().run(timeout=30)
+    workspace = deepcopy(app.session_state["offline_workspace"])
+    warning = "policy.pdf: Page 2 contains no searchable text. Check the original document."
+    workspace["sources"][0].update(extraction_warnings=[warning], partially_extracted=True)
+    frame = evaluate_review_workspace(workspace)
+    app.session_state["offline_workspace"] = workspace
+    app.session_state["offline_baseline"] = frame
+    app.run(timeout=30)
+    assert not app.exception
+    assert any("source content needs an extraction check" in widget.value for widget in app.warning)
+    assert any(warning in widget.value for widget in app.text)
+    payload = json.loads(json_report(frame))
+    assert payload["metadata"]["source_extraction_notices"] == [warning]
+    assert any("Check the original documents" in item for item in payload["metadata"]["limitations"])
+
+
 def test_public_settings_ignore_server_credentials_and_end_session_clears_ui(private_ui, monkeypatch):
     def forbidden_server_key(provider):
         raise AssertionError("The public UI must not inspect or use server credentials")
@@ -177,6 +197,10 @@ def test_public_settings_ignore_server_credentials_and_end_session_clears_ui(pri
     assert "offline_workspace" not in app.session_state
     assert app.session_state["last_results"].empty
     assert all(not value for value in app.session_state["provider_api_keys"].values())
+    app.button(key="start_resume").click().run(timeout=30)
+    assert not app.exception
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    assert next(button for button in app.button if button.label == "Resume review").disabled
 
 
 def test_resume_refuses_stale_reviews_and_unknown_replacement_cases():

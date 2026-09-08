@@ -17,7 +17,7 @@ from src import config
 from src import execution as _execution
 from src.domain import ExecutionStatus
 
-EXECUTION_SOURCE_SHA256 = "6b1e4031be449ffcbb7c66b45046793ecdeb61d4e4885b484eb668fa9996556b"
+EXECUTION_SOURCE_SHA256 = "400068675b24cdd84706df0d6a6b8a1491fee82b33916d994b5e314443a9d5d2"
 RUNTIME_VERSION = "browser-sequential-v1"
 _NativeEngine = _execution.ExecutionEngine
 
@@ -66,7 +66,7 @@ class BrowserSequentialExecutionEngine(_NativeEngine):
     def __init__(self, target, policy=None, *, case_limit=None, **kwargs) -> None:
         if sys.platform != "emscripten":
             raise RuntimeError("This execution adapter is only for Emscripten.")
-        policy = policy or _execution.ExecutionPolicy(max_concurrency=1)
+        policy = policy or _execution.ExecutionPolicy(max_concurrency=1, max_retries=target.default_retry_count)
         if policy.max_concurrency != 1:
             raise ValueError("Browser execution requires max_concurrency=1; it runs one question at a time.")
         self.case_limit = config.MAX_DATASET_ROWS if case_limit is None else case_limit

@@ -16,7 +16,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_RELEASE = "2026.09.07.6"
+APP_RELEASE = "2026.09.08.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -67,7 +67,7 @@ EXTERNAL_TARGET_ALLOWED_HOSTS = tuple(
 ALLOW_PRIVATE_EXTERNAL_TARGETS = os.getenv("ALLOW_PRIVATE_EXTERNAL_TARGETS", "false").lower() in {"1", "true", "yes"}
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "90"))
 LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "30"))
-PRICING_VERSION = os.getenv("PRICING_VERSION", "2026-08-20")
+PRICING_VERSION = os.getenv("PRICING_VERSION", "2026-09-08")
 PRICING_EFFECTIVE_DATE = os.getenv("PRICING_EFFECTIVE_DATE", "2026-08-20")
 
 
@@ -109,8 +109,9 @@ TOKEN_PRICING_PER_1K: dict[str, PricingEntry] = {
         "input": 0.002,
         "output": 0.01,
         "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-        "effective_date": "2026-08-20",
-        "expires_on": "2026-08-31",
+        # The introductory rate became the standard rate; the announced
+        # September 1 increase was cancelled (source checked September 8).
+        "effective_date": "2026-09-08",
     },
     "claude-haiku-4-5": {
         "input": 0.001,

@@ -8,6 +8,8 @@ The [Streamlit fallback](https://ai-reliability-studio.streamlit.app/) remains a
 
 AI Reliability Studio helps review AI assistants against versioned questions, source documents, saved answers, and real target APIs. It keeps source evidence, returned citations/actions, review decisions, and replacement comparisons together. Automatic checks are advisory and can be wrong or uncertain; the app does not certify launch readiness.
 
+For teams checking **support or RAG assistants against source documents**, begin with [the source-review workflow](docs/support-rag-review.md). Import answers from the assistant you actually want to check, review each answer against the relevant policy, and compare replacement answers after a fix. Direct provider runs use Studio's own prompt and retrieval; they do not exercise your deployed assistant's retrieval, tools or application behavior.
+
 ## Evidence handling
 
 - Synthetic runs are always labeled `Synthetic demonstration — not model-quality evidence` and never receive a launch verdict.

@@ -38,6 +38,39 @@ UPLOAD_TYPES = sorted(extension.lstrip(".") for extension in SUPPORTED_EXTENSION
 ZIP_BASED_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
 
 
+def source_extraction_warnings(records: list[dict[str, Any]]) -> list[str]:
+    """Collect bounded display notices from extracted documents or source chunks.
+
+    Document ``warnings`` receive a filename prefix; chunk
+    ``extraction_warnings`` are already display-ready. Notices describe extraction
+    limitations and do not establish the completeness or authenticity of a source.
+    """
+    notices: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        values = record.get("extraction_warnings", [])
+        values = list(values) if isinstance(values, list) else []
+        raw_warnings = record.get("warnings", [])
+        filename = record.get("filename")
+        prefix = f"{filename.strip()}: " if isinstance(filename, str) and filename.strip() else ""
+        if isinstance(raw_warnings, list):
+            values.extend(
+                f"{prefix}{value.strip()}" for value in raw_warnings if isinstance(value, str) and value.strip()
+            )
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            notice = value.strip()
+            if len(notice) > 600:
+                notice = notice[:570] + "… (notice shortened)"
+            if notice not in seen:
+                seen.add(notice)
+                notices.append(notice)
+            if len(notices) > 20:
+                return [*notices[:19], "Additional extraction warnings were omitted from this bounded display."]
+    return notices
+
+
 def load_document(
     path: str | Path,
     *,
@@ -140,15 +173,32 @@ def extract_document_artifact(
                     warnings.append(ocr.safe_warning)
         elif suffix == ".docx":
             import docx
+            from docx.table import Table
 
             document = docx.Document(BytesIO(data))
             parts: list[str] = []
             section: str | None = None
-            for paragraph in document.paragraphs:
-                value = paragraph.text.strip()
+            table_number = 0
+            for body_element in document.iter_inner_content():
+                if isinstance(body_element, Table):
+                    table_number += 1
+                    table_lines = [" | ".join(cell.text for cell in row.cells) for row in body_element.rows]
+                    value = "\n".join(table_lines)
+                    parts.extend(table_lines)
+                    blocks.append(
+                        {
+                            "text": value,
+                            "kind": "table",
+                            "section": section,
+                            "table": table_number,
+                            "filename": safe_name,
+                        }
+                    )
+                    continue
+                value = body_element.text.strip()
                 if not value:
                     continue
-                style = str(getattr(paragraph.style, "name", "") or "")
+                style = str(getattr(body_element.style, "name", "") or "")
                 if style.lower().startswith("heading"):
                     section = value
                 parts.append(value)
@@ -159,13 +209,6 @@ def extract_document_artifact(
                         "section": section,
                         "filename": safe_name,
                     }
-                )
-            for table_number, table in enumerate(document.tables, start=1):
-                table_lines = [" | ".join(cell.text for cell in row.cells) for row in table.rows]
-                value = "\n".join(table_lines)
-                parts.extend(table_lines)
-                blocks.append(
-                    {"text": value, "kind": "table", "section": section, "table": table_number, "filename": safe_name}
                 )
             text = "\n".join(parts)
         elif suffix == ".rtf":
@@ -178,14 +221,14 @@ def extract_document_artifact(
 
             if len(data) > config.MAX_UPLOAD_BYTES:
                 raise ValueError("Tabular upload exceeds the configured size limit.")
-            frame = pd.read_csv(BytesIO(data), sep="\t" if suffix == ".tsv" else ",")
+            frame = pd.read_csv(BytesIO(data), sep="\t" if suffix == ".tsv" else ",", dtype=str, keep_default_na=False)
             _validate_frame(frame)
             text, table_blocks = _frame_to_artifact(frame, safe_name, safe_name)
             blocks.extend(table_blocks)
         elif suffix in {".xlsx", ".xls"}:
             import pandas as pd
 
-            sheets = pd.read_excel(BytesIO(data), sheet_name=None)
+            sheets = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str, keep_default_na=False)
             parts = []
             for sheet, frame in sheets.items():
                 _validate_frame(frame)
@@ -295,12 +338,12 @@ def detect_duplicate_documents(
 
 
 def _decode_text(data: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-16", "latin-1"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
 
 
 def _frame_to_artifact(frame, label: str, filename: str) -> tuple[str, list[dict[str, Any]]]:
