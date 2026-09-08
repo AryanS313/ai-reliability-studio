@@ -3,14 +3,86 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+import pandas as pd
 import pytest
 from psycopg.errors import InsufficientPrivilege
 
+from src.chunker import chunk_documents
+from src.document_loader import source_extraction_warnings
 from src.domain import Role, WorkspaceContext
+from src.reporting import build_report_payload
 from src.security import AuthorizationError
 from src.storage import PostgresRepository
+from src.versioning import version_hash
 
 pytestmark = pytest.mark.postgres
+
+
+def test_source_notices_and_execution_accounting_roundtrip(postgres_repository):
+    repository = postgres_repository
+    context = repository.create_workspace("accounting-source@example.test", "Source and attempt observations")
+    project = repository.create_project(context, {"name": "Fictional policy"})
+    document = {
+        "filename": "partial-policy.pdf",
+        "text": "The Basic plan retains records for 30 days.",
+        "warnings": ["Page 2 contains no searchable text."],
+    }
+    repository.save_documents_and_chunks(context, [document], chunk_documents([document]), project)
+    restored_chunks = repository.load_chunks(context, project)
+    assert source_extraction_warnings(restored_chunks) == ["partial-policy.pdf: Page 2 contains no searchable text."]
+    assert restored_chunks[0]["partially_extracted"] is True
+    manifest = {
+        "target": {"type": "synthetic_mock", "version": "fixture-target-v1"},
+        "documents": [
+            {
+                "version": restored_chunks[0]["document_hash"],
+                "extraction_notices": source_extraction_warnings(restored_chunks),
+            }
+        ],
+        "dataset": {"content_hash": "fixture-dataset-v1"},
+        "environment": "fixture",
+    }
+    manifest["manifest_hash"] = version_hash(manifest)
+
+    for attempts, cached in [(3, False), (0, True)]:
+        run_id = repository.create_run(
+            context,
+            run_name=f"Accounting {attempts}",
+            model_name="unknown",
+            mode="batch",
+            unique_case_count=1,
+            total_executions=1,
+            project_id=project,
+            manifest=manifest,
+        )
+        accounting = {"attempt_count": attempts, "cache_hit": cached, "execution_key": "engine-cache-key"}
+        repository.save_result(
+            context,
+            run_id,
+            {
+                "case_id": "fixture-case",
+                "question": "Fictional question",
+                "execution_status": "failed",
+                "metadata": {"execution": accounting},
+            },
+        )
+        restored = repository.list_results(context, run_id)[0]
+        assert {key: restored[key] for key in accounting} == accounting
+        assert restored["manifest"] == manifest
+        assert restored["manifest_hash"] == manifest["manifest_hash"]
+        report = build_report_payload(pd.DataFrame([restored]))
+        assert report["run_manifests"][0]["original_manifest_hash"] == manifest["manifest_hash"]
+        assert report["run_manifests"][0]["original_hash_status"] == "verified"
+        assert report["metadata"]["source_extraction_notices"] == source_extraction_warnings(restored_chunks)
+        with repository.connection() as conn:
+            repository._scope(conn, context)
+            execution = conn.execute(
+                "SELECT attempt_count, execution_key, metadata_json FROM executions WHERE workspace_id = %s AND run_id = %s",
+                (context.workspace_id, run_id),
+            ).fetchone()
+        assert execution["attempt_count"] == attempts
+        assert execution["metadata_json"]["execution"] == accounting
+        assert execution["execution_key"] != accounting["execution_key"]
 
 
 @pytest.fixture(scope="module")

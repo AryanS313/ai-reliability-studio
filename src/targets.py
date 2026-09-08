@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -12,7 +13,9 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -56,8 +59,17 @@ class TargetAdapter(ABC):
     def execute(self, request: dict[str, Any]) -> TargetResponse:
         raise NotImplementedError
 
+    @property
+    def default_retry_count(self) -> int:
+        return 2
+
     def health_check(self) -> TargetResponse:
-        return TargetResponse(status=ExecutionStatus.PASSED, metadata={"health": "available"})
+        return TargetResponse(
+            status=ExecutionStatus.PENDING,
+            error_code="health_check_not_configured",
+            safe_error="No network health check was performed. This target has no configured health-check path.",
+            metadata={"health": "not_checked", "network_checked": False},
+        )
 
 
 @dataclass(frozen=True)
@@ -223,6 +235,7 @@ class FoundationModelConfig:
 
 class FoundationModelTarget(TargetAdapter):
     target_type = TargetType.FOUNDATION_MODEL
+    implementation_version = "provider-native-system-v2"
 
     def __init__(self, configuration: FoundationModelConfig, secrets: SecretResolver | None = None) -> None:
         self.configuration = configuration
@@ -231,7 +244,13 @@ class FoundationModelTarget(TargetAdapter):
     @property
     def version(self) -> str:
         # The reference name is reproducible; the secret value is deliberately absent.
-        return version_hash({"type": self.target_type.value, **asdict(self.configuration)})
+        return version_hash(
+            {
+                "type": self.target_type.value,
+                "implementation_version": self.implementation_version,
+                **asdict(self.configuration),
+            }
+        )
 
     def execute(self, request: dict[str, Any]) -> TargetResponse:
         from src.llm_client import generate_answer
@@ -257,6 +276,7 @@ class FoundationModelTarget(TargetAdapter):
             metadata=dict(result.get("metadata") or {}),
             error_code=result.get("error_code"),
             safe_error=result.get("safe_error"),
+            http_status=result.get("http_status"),
             provider=_optional_identity(result.get("provider")),
             model=_optional_identity(result.get("model")),
             final_prompt=str(result.get("final_prompt", "")),
@@ -282,6 +302,12 @@ class ExternalTargetConfig:
             raise TargetConfigurationError("External target method must be GET, POST, PUT, or PATCH")
         if not 0.1 <= self.timeout_seconds <= 300:
             raise TargetConfigurationError("timeout_seconds must be between 0.1 and 300")
+        if (
+            isinstance(self.retry_count, bool)
+            or not isinstance(self.retry_count, int)
+            or not 0 <= self.retry_count <= 10
+        ):
+            raise TargetConfigurationError("retry_count must be an integer between 0 and 10")
         for value in self.headers.values():
             if _looks_like_secret(value) and not value.startswith("secret://"):
                 raise TargetConfigurationError("Header secrets must be stored as secret://NAME references")
@@ -303,6 +329,23 @@ class ExternalHTTPTarget(TargetAdapter):
     @property
     def version(self) -> str:
         return version_hash({"type": self.target_type.value, **asdict(self.configuration)})
+
+    @property
+    def default_retry_count(self) -> int:
+        return self.configuration.retry_count
+
+    @property
+    def sends_system_prompt(self) -> bool:
+        """Only rendered body values can transmit Studio's prompt to this endpoint."""
+
+        def contains(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(contains(item) for item in value.values())
+            if isinstance(value, list):
+                return any(contains(item) for item in value)
+            return isinstance(value, str) and "${system_prompt}" in value
+
+        return self.configuration.method.upper() != "GET" and contains(self.configuration.request_template)
 
     def execute(self, request: dict[str, Any]) -> TargetResponse:
         started = time.perf_counter()
@@ -357,22 +400,7 @@ class ExternalHTTPTarget(TargetAdapter):
                     provider=None,
                 )
             if status_code >= 400:
-                rate_limited = status_code == 429
-                authentication_error = status_code in {401, 403}
-                return TargetResponse(
-                    status=ExecutionStatus.RATE_LIMITED if rate_limited else ExecutionStatus.FAILED,
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                    http_status=status_code,
-                    error_code=(
-                        "rate_limited"
-                        if rate_limited
-                        else "external_authentication_error"
-                        if authentication_error
-                        else "external_http_error"
-                    ),
-                    safe_error=f"External target returned HTTP {status_code}.",
-                    provider=None,
-                )
+                return _http_failure_response(status_code, getattr(response, "headers", None), started=started)
             try:
                 response_bytes = response.read(config.MAX_EXTERNAL_RESPONSE_BYTES + 1)
             except TypeError:  # Minimal test/dummy responses may not expose read(size).
@@ -397,32 +425,10 @@ class ExternalHTTPTarget(TargetAdapter):
                 provider=None,
             )
         except urllib.error.HTTPError as exc:
-            status_code = int(exc.code)
-            exc.close()
-            if 300 <= status_code < 400:
-                return TargetResponse(
-                    status=ExecutionStatus.INVALID_RESPONSE,
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                    http_status=status_code,
-                    error_code="external_redirect_blocked",
-                    safe_error="External target redirects are disabled.",
-                    provider=None,
-                )
-            status = ExecutionStatus.RATE_LIMITED if status_code == 429 else ExecutionStatus.FAILED
-            return TargetResponse(
-                status=status,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                http_status=status_code,
-                error_code=(
-                    "rate_limited"
-                    if status_code == 429
-                    else "external_authentication_error"
-                    if status_code in {401, 403}
-                    else "external_http_error"
-                ),
-                safe_error=f"External target returned HTTP {status_code}.",
-                provider=None,
-            )
+            try:
+                return _http_failure_response(int(exc.code), exc.headers, started=started)
+            finally:
+                exc.close()
         except TargetConfigurationError:
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
@@ -486,9 +492,23 @@ class ExternalHTTPTarget(TargetAdapter):
             return super().health_check()
         endpoint = self.configuration.endpoint.rstrip("/") + "/" + self.configuration.health_check_path.lstrip("/")
         response = None
+        started = time.perf_counter()
+        attempted = False
+
+        def checked(result: TargetResponse) -> TargetResponse:
+            return replace(
+                result,
+                metadata={
+                    **result.metadata,
+                    "health": "passed" if result.status == ExecutionStatus.PASSED else "failed",
+                    "network_checked": attempted,
+                },
+            )
+
         try:
             _validate_resolved_destination(endpoint)
             headers = {name: self._header_value(value) for name, value in self.configuration.headers.items()}
+            attempted = True
             response = self._opener(
                 urllib.request.Request(  # noqa: S310 - endpoint inherits validated target origin
                     endpoint, headers=headers, method="GET"
@@ -498,22 +518,36 @@ class ExternalHTTPTarget(TargetAdapter):
             status = int(getattr(response, "status", 200))
             final_url = response.geturl() if hasattr(response, "geturl") else endpoint
             if not _same_origin(endpoint, final_url) or 300 <= status < 400:
-                return TargetResponse(
-                    status=ExecutionStatus.INVALID_RESPONSE,
-                    http_status=status,
-                    error_code="external_redirect_blocked",
-                    safe_error="External target health-check redirects are disabled.",
+                return checked(
+                    TargetResponse(
+                        status=ExecutionStatus.INVALID_RESPONSE,
+                        http_status=status,
+                        error_code="external_redirect_blocked",
+                        safe_error="External target health-check redirects are disabled.",
+                    )
                 )
-            return TargetResponse(
-                status=ExecutionStatus.PASSED if status < 400 else ExecutionStatus.FAILED, http_status=status
+            if not 200 <= status < 300:
+                return checked(_http_failure_response(status, getattr(response, "headers", None), started=started))
+            return checked(
+                TargetResponse(
+                    status=ExecutionStatus.PASSED,
+                    http_status=status,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
             )
-        except Exception as exc:
-            if isinstance(exc, urllib.error.HTTPError):
+        except urllib.error.HTTPError as exc:
+            try:
+                return checked(_http_failure_response(int(exc.code), exc.headers, started=started))
+            finally:
                 exc.close()
-            return TargetResponse(
-                status=ExecutionStatus.FAILED,
-                error_code="health_check_failed",
-                safe_error="External target health check failed.",
+        except Exception:
+            return checked(
+                TargetResponse(
+                    status=ExecutionStatus.FAILED,
+                    error_code="health_check_failed",
+                    safe_error="External target health check failed.",
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
             )
         finally:
             if response is not None and callable(getattr(response, "close", None)):
@@ -523,6 +557,56 @@ class ExternalHTTPTarget(TargetAdapter):
         if value.startswith("secret://"):
             return self.secrets.resolve(value)
         return value
+
+
+def _retry_after_seconds(value: Any) -> float | None:
+    if not isinstance(value, str) or not value.strip() or len(value) > 128:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            stamp = parsedate_to_datetime(value)
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            seconds = max(0.0, (stamp - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _http_failure_response(status: int, headers: Any, *, started: float) -> TargetResponse:
+    redirect = 300 <= status < 400
+    metadata: dict[str, Any] = {
+        "quality_score_eligible": False,
+        "retryable": status in {408, 409, 429} or 500 <= status < 600,
+    }
+    retry_after = _retry_after_seconds(headers.get("Retry-After")) if headers is not None else None
+    if retry_after is not None and retry_after > 600:
+        metadata["retryable"] = False
+        metadata["retry_suppressed"] = "retry_after_exceeds_supported_limit"
+    elif retry_after is not None:
+        metadata["retry_after_seconds"] = retry_after
+    return TargetResponse(
+        status=ExecutionStatus.INVALID_RESPONSE
+        if redirect
+        else ExecutionStatus.RATE_LIMITED
+        if status == 429
+        else ExecutionStatus.FAILED,
+        http_status=status,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        error_code="external_redirect_blocked"
+        if redirect
+        else "rate_limited"
+        if status == 429
+        else "external_authentication_error"
+        if status in {401, 403}
+        else "external_http_error",
+        safe_error="External target redirects are disabled."
+        if redirect
+        else f"External target returned HTTP {status}.",
+        metadata=metadata,
+    )
 
 
 def target_configuration_for_storage(configuration: Any) -> dict[str, Any]:

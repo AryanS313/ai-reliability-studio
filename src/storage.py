@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from src import config
+from src.document_loader import source_extraction_warnings
 from src.domain import Role, WorkspaceContext
 from src.migrations import migrate_sqlite
 from src.security import AuthorizationError, redact_pii, redact_secrets, require_role, sanitize_filename
@@ -18,6 +19,82 @@ from src.versioning import text_hash, version_hash
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _result_metadata(result: dict[str, Any]) -> dict[str, Any]:
+    stored = result.get("metadata_json", {})
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except (ValueError, TypeError):
+            stored = {}
+    metadata = dict(stored) if isinstance(stored, dict) else {}
+    if isinstance(result.get("metadata"), dict):
+        metadata.update(result["metadata"])
+    return metadata
+
+
+def _execution_accounting(metadata: dict[str, Any]) -> dict[str, Any]:
+    execution = metadata.get("execution")
+    execution = execution if isinstance(execution, dict) else {}
+    attempts = execution.get("attempt_count")
+    cache_hit = execution.get("cache_hit")
+    key = execution.get("execution_key")
+    return {
+        "attempt_count": attempts if type(attempts) is int and attempts >= 0 else None,
+        "cache_hit": cache_hit if isinstance(cache_hit, bool) else None,
+        "execution_key": key if isinstance(key, str) and key.strip() else None,
+    }
+
+
+def _prepare_execution_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep engine observations in portable metadata without mutating the caller."""
+    metadata = _result_metadata(result)
+    existing = metadata.get("execution")
+    execution = dict(existing) if isinstance(existing, dict) else {}
+    for field in ("attempt_count", "cache_hit", "execution_key"):
+        if field not in execution and field in result:
+            execution[field] = result[field]
+    metadata["execution"] = {**execution, **_execution_accounting({"execution": execution})}
+    return {
+        **result,
+        **_execution_accounting(metadata),
+        "metadata": metadata,
+        "metadata_json": json.dumps(metadata, default=str),
+    }
+
+
+def _hydrate_execution_result(result: dict[str, Any]) -> dict[str, Any]:
+    # Old executions rows used a hardcoded attempt_count=1. Only recorded engine
+    # metadata is evidence; missing historical observations must remain unknown.
+    result = dict(result)
+    stored_manifest = result.pop("run_manifest_json", None)
+    if isinstance(stored_manifest, str):
+        try:
+            stored_manifest = json.loads(stored_manifest)
+        except ValueError:
+            stored_manifest = None
+    if isinstance(stored_manifest, dict) and stored_manifest:
+        # Export the stored snapshot and recorded hash exactly; never rebuild it
+        # from current source, target, evaluator or runtime settings.
+        result.update(manifest=stored_manifest, manifest_hash=stored_manifest.get("manifest_hash"))
+    metadata = _result_metadata(result)
+    return {**result, **_execution_accounting(metadata), "metadata": metadata}
+
+
+def _hydrate_chunk_warnings(row: dict[str, Any]) -> dict[str, Any]:
+    warnings = row.pop("document_extraction_warnings", [])
+    if isinstance(warnings, str):
+        try:
+            warnings = json.loads(warnings)
+        except ValueError:
+            warnings = []
+    if not isinstance(warnings, list):
+        warnings = []
+    notices = source_extraction_warnings([{"filename": row["filename"], "warnings": warnings}])
+    if notices:
+        row.update(extraction_warnings=notices, partially_extracted=True)
+    return row
 
 
 class Repository(ABC):
@@ -310,7 +387,8 @@ class SQLiteRepository(Repository):
                 SELECT c.id, c.document_id, c.document_version_id, c.source_name, c.filename,
                        c.chunk_text, c.chunk_index, c.chunk_id, c.page, c.section, c.text_start,
                        c.text_end, c.content_hash, dv.version AS document_version,
-                       dv.content_hash AS document_hash
+                       dv.content_hash AS document_hash,
+                       dv.extraction_warnings AS document_extraction_warnings
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
                 JOIN document_versions dv ON dv.id = c.document_version_id
@@ -320,7 +398,7 @@ class SQLiteRepository(Repository):
                 """,
                 (context.workspace_id, project_id),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [_hydrate_chunk_warnings(dict(row)) for row in rows]
 
     def list_documents(self, context: WorkspaceContext, project_id: int | None = None) -> list[dict[str, Any]]:
         self.authorize(context)
@@ -614,6 +692,7 @@ class SQLiteRepository(Repository):
     def save_result(self, context: WorkspaceContext, run_id: int, result: dict[str, Any]) -> int:
         self.authorize(context, Role.EDITOR)
         self._require_run(context, run_id)
+        result = _prepare_execution_result(result)
         json_fields = {
             "retrieved_sources",
             "retrieved_chunks",
@@ -667,7 +746,7 @@ class SQLiteRepository(Repository):
                 (workspace_id, run_id, case_id, execution_key, prompt_version_id, target_version_id,
                  status, attempt_count, completed_at, latency_ms, http_status, provider, model,
                  input_tokens, output_tokens, cost, error_code, safe_error, response_json, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     context.workspace_id,
@@ -677,6 +756,9 @@ class SQLiteRepository(Repository):
                     int(prompt_version["id"]) if prompt_version else None,
                     int(target_version["id"]) if target_version else None,
                     str(result.get("execution_status") or "passed"),
+                    # The legacy NOT NULL column cannot represent unknown; the
+                    # metadata remains authoritative and retains None in that case.
+                    result["attempt_count"] if result["attempt_count"] is not None else 0,
                     utcnow(),
                     result.get("latency_ms"),
                     result.get("http_status"),
@@ -755,7 +837,8 @@ class SQLiteRepository(Repository):
             if run_id is None:
                 rows = conn.execute(
                     """
-                    SELECT er.*, runs.run_name, runs.timestamp, runs.mode, runs.status AS run_status
+                    SELECT er.*, runs.run_name, runs.timestamp, runs.mode, runs.status AS run_status,
+                           runs.manifest_json AS run_manifest_json
                     FROM eval_results er JOIN eval_runs runs ON runs.id = er.run_id
                     WHERE er.workspace_id = ? ORDER BY er.id DESC
                     """,
@@ -764,13 +847,14 @@ class SQLiteRepository(Repository):
             else:
                 rows = conn.execute(
                     """
-                    SELECT er.*, runs.run_name, runs.timestamp, runs.mode, runs.status AS run_status
+                    SELECT er.*, runs.run_name, runs.timestamp, runs.mode, runs.status AS run_status,
+                           runs.manifest_json AS run_manifest_json
                     FROM eval_results er JOIN eval_runs runs ON runs.id = er.run_id
                     WHERE er.workspace_id = ? AND er.run_id = ? ORDER BY er.id DESC
                     """,
                     (context.workspace_id, run_id),
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return [_hydrate_execution_result(dict(row)) for row in rows]
 
     def latest_results(self, context: WorkspaceContext) -> list[dict[str, Any]]:
         self.authorize(context)
@@ -1359,7 +1443,8 @@ class PostgresRepository(Repository):
             self._scope(conn, context)
             rows = conn.execute(
                 """
-                SELECT c.*, dv.version AS document_version, dv.content_hash AS document_hash
+                SELECT c.*, dv.version AS document_version, dv.content_hash AS document_hash,
+                       dv.extraction_warnings AS document_extraction_warnings
                 FROM chunks c JOIN documents d ON d.id = c.document_id
                 JOIN document_versions dv ON dv.id = c.document_version_id
                 WHERE c.workspace_id = %s AND d.project_id IS NOT DISTINCT FROM %s
@@ -1368,7 +1453,7 @@ class PostgresRepository(Repository):
                 """,
                 (context.workspace_id, project_id),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [_hydrate_chunk_warnings(dict(row)) for row in rows]
 
     def list_documents(self, context: WorkspaceContext, project_id: int | None = None) -> list[dict[str, Any]]:
         self.authorize(context)
@@ -1661,6 +1746,7 @@ class PostgresRepository(Repository):
     def save_result(self, context: WorkspaceContext, run_id: int, result: dict[str, Any]) -> int:
         self.authorize(context, Role.EDITOR)
         self._require_run(context, run_id)
+        result = _prepare_execution_result(result)
         execution_key = version_hash(
             {
                 "run_id": run_id,
@@ -1677,7 +1763,7 @@ class PostgresRepository(Repository):
                 (workspace_id, run_id, case_id, execution_key, status, attempt_count, completed_at,
                  latency_ms, http_status, provider, model, input_tokens, output_tokens, cost,
                  error_code, safe_error, response_json, metadata_json)
-                VALUES (%s, %s, %s, %s, %s, 1, now(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (workspace_id, execution_key) DO UPDATE SET status = EXCLUDED.status
                 RETURNING id
                 """,
@@ -1687,6 +1773,7 @@ class PostgresRepository(Repository):
                     str(result.get("case_id") or result.get("question") or "unknown"),
                     execution_key,
                     str(result.get("execution_status") or "passed"),
+                    result["attempt_count"] if result["attempt_count"] is not None else 0,
                     result.get("latency_ms"),
                     result.get("http_status"),
                     result.get("provider"),
@@ -1760,7 +1847,8 @@ class PostgresRepository(Repository):
             if run_id is None:
                 rows = conn.execute(
                     """
-                    SELECT er.result_json, r.run_name, r.timestamp, r.mode, r.status AS run_status
+                    SELECT er.result_json, r.run_name, r.timestamp, r.mode, r.status AS run_status,
+                           r.manifest_json AS run_manifest_json
                     FROM eval_results er JOIN eval_runs r ON r.id = er.run_id
                     WHERE er.workspace_id = %s ORDER BY er.id DESC
                     """,
@@ -1769,7 +1857,8 @@ class PostgresRepository(Repository):
             else:
                 rows = conn.execute(
                     """
-                    SELECT er.result_json, r.run_name, r.timestamp, r.mode, r.status AS run_status
+                    SELECT er.result_json, r.run_name, r.timestamp, r.mode, r.status AS run_status,
+                           r.manifest_json AS run_manifest_json
                     FROM eval_results er JOIN eval_runs r ON r.id = er.run_id
                     WHERE er.workspace_id = %s AND er.run_id = %s ORDER BY er.id DESC
                     """,
@@ -1779,7 +1868,8 @@ class PostgresRepository(Repository):
         for row in rows:
             result = row["result_json"] if isinstance(row["result_json"], dict) else json.loads(row["result_json"])
             result.update({key: row[key] for key in ["run_name", "timestamp", "mode", "run_status"]})
-            output.append(result)
+            result["run_manifest_json"] = row.get("run_manifest_json")
+            output.append(_hydrate_execution_result(result))
         return output
 
     def latest_results(self, context: WorkspaceContext) -> list[dict[str, Any]]:

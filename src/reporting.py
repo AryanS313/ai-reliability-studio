@@ -11,6 +11,7 @@ import pandas as pd
 
 from src.aggregation import LaunchGateConfig, evaluate_candidates
 from src.config import MAX_EXPORT_ROWS
+from src.document_loader import source_extraction_warnings
 from src.presentation import execution_summary, safe_nested
 from src.security import redact_pii, redact_secrets
 from src.versioning import version_hash
@@ -211,6 +212,7 @@ def report_metadata(df: pd.DataFrame, *, gates: LaunchGateConfig | None = None) 
     limitations = [
         "Automated scores are estimates and do not replace expert review of high-severity cases.",
         "Infrastructure failures are excluded from quality averages and reported separately.",
+        "Reported costs describe the returned answers, not a provider invoice. Charges for failed attempts and other activity may be unknown.",
         RETRIEVAL_NOTICE,
         "Manifest hashes provide content integrity, not independent proof of execution, review, or source authenticity.",
     ]
@@ -219,6 +221,25 @@ def report_metadata(df: pd.DataFrame, *, gates: LaunchGateConfig | None = None) 
     if "saved_responses" in target_types:
         limitations.append(
             "Imported responses are supplied artifacts; their origin is not independently verified, and offline review provides no launch verdict."
+        )
+    extraction_notices = source_extraction_warnings(
+        [
+            chunk
+            for manifest in manifests
+            for chunk in (manifest.get("reference_chunks") or [])
+            if isinstance(chunk, dict)
+        ]
+        + [
+            {"extraction_warnings": document.get("extraction_notices", [])}
+            for manifest in manifests
+            for document in (manifest.get("documents") or [])
+            if isinstance(document, dict)
+        ]
+    )
+    if extraction_notices:
+        limitations.append(
+            "Some reference documents have extraction notices. Check the original documents before treating "
+            "the imported passages as complete: " + " ".join(extraction_notices)
         )
     if calibration_statuses != ["calibrated"]:
         limitations.append("A qualifying held-out human calibration was not recorded for all evidence.")
@@ -245,6 +266,7 @@ def report_metadata(df: pd.DataFrame, *, gates: LaunchGateConfig | None = None) 
         or _manifest_nested_values(manifests, "dataset", "content_hash"),
         "document_versions": sorted(source_versions),
         "knowledge_base_versions": _unique(df, "knowledge_base_version"),
+        "source_extraction_notices": extraction_notices,
         "evaluator_versions": _unique(df, "evaluator_version"),
         "threshold_versions": _unique(df, "threshold_version"),
         "gate_configuration_versions": [version_hash(asdict(gates))],

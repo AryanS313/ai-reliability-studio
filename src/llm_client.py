@@ -12,6 +12,45 @@ from src.targets import MockTargetConfig, SyntheticMockTarget
 
 PROVIDER_TIMEOUT_SECONDS = 30.0
 SONNET_5_CAPABILITY_SOURCE = "https://platform.claude.com/docs/en/models/sonnet-5/migration-guide"
+GEMINI_USAGE_SOURCE = "https://ai.google.dev/gemini-api/docs/generate-content/thinking#pricing"
+
+
+def _gemini_usage(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate billing counters before the pinned SDK removes newer fields.
+
+    Missing thinking usage is only known to be zero when the reported total
+    equals prompt plus candidate usage. Unknown/invalid counts cannot establish
+    the complete cost; never infer a thinking budget from answer length.
+    """
+    counts = {
+        key: value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        for key in ("promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "totalTokenCount")
+        for value in (raw.get(key),)
+    }
+    prompt, candidate, thought, total = counts.values()
+    thought_source = "provider" if thought is not None else "not_reported"
+    if "thoughtsTokenCount" not in raw and prompt is not None and candidate is not None and total == prompt + candidate:
+        thought = 0
+        thought_source = "reported_total_has_no_unaccounted_tokens"
+    output = candidate + thought if candidate is not None and thought is not None else None
+    complete = prompt is not None and output is not None
+    if "totalTokenCount" in raw and (
+        total is None or (prompt is not None and output is not None and total != prompt + output)
+    ):
+        complete = False
+    return {
+        "input_tokens": prompt,
+        "output_tokens": output,
+        "complete": complete,
+        "components": {
+            "unit": "tokens",
+            "prompt": prompt,
+            "candidate": candidate,
+            "thinking": thought,
+            "total": total,
+            "thinking_count_source": thought_source,
+        },
+    }
 
 
 def _anthropic_sampling_configuration(model_name: str, temperature: float, seed: int | None) -> dict[str, Any]:
@@ -69,15 +108,40 @@ def _http_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Clien
 
 
 def build_final_prompt(system_prompt: str, context: str, question: str) -> str:
-    return f"""{system_prompt.strip()}
+    """Readable normalized role trace; provider wire field names differ."""
+    return _normalized_prompt_trace(system_prompt, build_user_message(context, question))
 
-Retrieved context:
+
+def build_user_message(context: str, question: str) -> str:
+    return f"""Retrieved context:
 {context.strip() or "No relevant context retrieved."}
 
 User question:
 {question}
 
 Assistant answer:"""
+
+
+def _normalized_prompt_trace(system_prompt: str, user_message: str) -> str:
+    messages = ([{"role": "system", "content": system_prompt.strip()}] if system_prompt.strip() else []) + [
+        {"role": "user", "content": user_message}
+    ]
+    return json.dumps({"format": "normalized-role-trace-v1", "messages": messages}, ensure_ascii=False, indent=2)
+
+
+def _prompt_transport_metadata(provider: str, system_prompt: str) -> dict[str, Any]:
+    return {
+        "version": "provider-native-system-v2",
+        "trace_format": "normalized-role-trace-v1",
+        "trace_is_literal_wire_payload": False,
+        "system_instruction_location": (
+            {"openai": "messages[role=system]", "anthropic": "system", "gemini": "systemInstruction"}[provider]
+            if system_prompt.strip()
+            else "omitted_empty_instruction"
+        ),
+        "user_content_location": "contents[role=user]" if provider == "gemini" else "messages[role=user]",
+        "request_status": "unconfirmed",
+    }
 
 
 def generate_answer(
@@ -121,6 +185,7 @@ def generate_answer(
     request_metadata = (
         _anthropic_sampling_configuration(model_name, temperature, seed) if provider == "anthropic" else {}
     )
+    request_metadata["prompt_transport"] = _prompt_transport_metadata(provider, system_prompt)
     effective_api_key = api_key or config.api_key_for_provider(provider)
     if not effective_api_key:
         return _failure(
@@ -132,14 +197,27 @@ def generate_answer(
             final_prompt=final_prompt,
             request_metadata=request_metadata,
         )
+    started = time.perf_counter()
     try:
+        user_message = build_user_message(context, question)
         if provider == "gemini":
-            result = _gemini_answer(final_prompt, model_name, effective_api_key, temperature, seed, max_tokens)
+            result = _gemini_answer(
+                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
+            )
         elif provider == "anthropic":
-            result = _anthropic_answer(final_prompt, model_name, effective_api_key, temperature, seed, max_tokens)
+            result = _anthropic_answer(
+                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
+            )
         else:
-            result = _openai_answer(final_prompt, model_name, effective_api_key, temperature, seed, max_tokens)
+            result = _openai_answer(
+                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
+            )
         metadata = dict(result.get("metadata") or {})
+        metadata["prompt_transport"] = {
+            **request_metadata["prompt_transport"],
+            "request_status": "provider_response_received",
+        }
+        result["metadata"] = metadata
         if result.get("refusal") or metadata.get("provider_safety_refusal"):
             metadata["provider_safety_refusal"] = True
             result["metadata"] = metadata
@@ -163,7 +241,7 @@ def generate_answer(
         result.update({"status": ExecutionStatus.PASSED.value, "provider": provider, "final_prompt": final_prompt})
         return result
     except Exception as exc:  # Provider SDKs expose many optional exception classes.
-        return _failure(
+        failure = _failure(
             status=_provider_status(exc),
             provider=provider,
             model=model_name,
@@ -172,6 +250,10 @@ def generate_answer(
             final_prompt=final_prompt,
             request_metadata=request_metadata,
         )
+        failure["http_status"] = _http_error_status(exc)
+        failure["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        failure["metadata"].update(_provider_error_metadata(exc))
+        return failure
 
 
 def _openai_answer(
@@ -181,6 +263,8 @@ def _openai_answer(
     temperature: float,
     seed: int | None,
     max_tokens: int,
+    *,
+    system_prompt: str = "",
 ) -> dict[str, Any]:
     from openai import OpenAI
 
@@ -206,7 +290,8 @@ def _openai_answer(
         # OpenAI 1.54.4 exposes Chat Completions; it has no Responses resource.
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": ([{"role": "system", "content": system_prompt.strip()}] if system_prompt.strip() else [])
+            + [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
@@ -221,7 +306,7 @@ def _openai_answer(
     result = _result(
         answer,
         model_name,
-        prompt,
+        _normalized_prompt_trace(system_prompt, prompt),
         start,
         input_tokens,
         output_tokens,
@@ -240,6 +325,8 @@ def _gemini_answer(
     temperature: float,
     seed: int | None,
     max_tokens: int,
+    *,
+    system_prompt: str = "",
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
@@ -265,6 +352,7 @@ def _gemini_answer(
     # google-genai 1.0.0 has no custom transport option and its requests sessions
     # inherit proxies/netrc and are not closed. Keep the SDK serialization/parser,
     # but use a per-instance synchronous transport with an explicit lifetime.
+    billing_usage: dict[str, Any] = {}
     with _http_client() as http_client:
 
         def request(http_request: Any, stream: bool = False) -> Any:
@@ -277,24 +365,53 @@ def _gemini_answer(
                 content=json.dumps(http_request.data),
             )
             response.raise_for_status()
+            # google-genai 1.0.0 removes fields absent from its old schema,
+            # including thoughtsTokenCount. Preserve only numeric usage here;
+            # never persist the raw response or thought content.
+            raw = response.json()
+            usage = raw.get("usageMetadata") if isinstance(raw, dict) else None
+            billing_usage.update(_gemini_usage(usage if isinstance(usage, dict) else {}))
             return HttpResponse(dict(response.headers), [response.text])
 
         api_client._request = request
-        generation = types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens, seed=seed)
+        generation = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            seed=seed,
+            system_instruction=system_prompt.strip() or None,
+        )
         response = client.models.generate_content(model=model_name, contents=prompt, config=generation)
     answer = response.text or ""
-    usage = getattr(response, "usage_metadata", None)
-    input_tokens = getattr(usage, "prompt_token_count", None)
-    output_tokens = getattr(usage, "candidates_token_count", None)
+    input_tokens = billing_usage.get("input_tokens")
+    output_tokens = billing_usage.get("output_tokens")
     result = _result(
         answer,
         model_name,
-        prompt,
+        _normalized_prompt_trace(system_prompt, prompt),
         start,
         input_tokens,
         output_tokens,
         observed_model=getattr(response, "model_version", None),
     )
+    # A word-count estimate omits hidden thinking. Keep available measurements,
+    # but do not attribute a complete cost when the provider usage is incomplete.
+    result.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
+    result["metadata"].update(
+        {
+            "token_usage_source": "provider" if billing_usage.get("complete") else "incomplete_provider",
+            "usage_source": "provider" if billing_usage.get("complete") else "incomplete_provider",
+            "usage_components": billing_usage.get("components", {}),
+            "output_usage_scope": "candidate_and_thinking_tokens",
+            "usage_accounting_version": "gemini-usage-v2",
+            "usage_accounting_source": GEMINI_USAGE_SOURCE,
+        }
+    )
+    if not billing_usage.get("complete"):
+        result["estimated_cost"] = None
+        result["metadata"]["pricing_warning"] = (
+            "Gemini token usage is incomplete or inconsistent; total cost is unknown, "
+            "including any unreported thinking tokens."
+        )
     reasons = [_enum_value(getattr(candidate, "finish_reason", None)) for candidate in response.candidates or []]
     feedback = getattr(response, "prompt_feedback", None)
     block_reason = _enum_value(getattr(feedback, "block_reason", None))
@@ -328,8 +445,10 @@ def _anthropic_answer(
     temperature: float,
     seed: int | None,
     max_tokens: int,
+    *,
+    system_prompt: str = "",
 ) -> dict[str, Any]:
-    from anthropic import Anthropic
+    from anthropic import NOT_GIVEN, Anthropic
 
     start = time.perf_counter()
     public = config.public_sessions_enabled()
@@ -349,6 +468,7 @@ def _anthropic_answer(
             model=model_name,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            system=system_prompt.strip() or NOT_GIVEN,
             **sampling_metadata["sampling"]["request_parameters"],
         )
     answer = "".join(
@@ -359,7 +479,7 @@ def _anthropic_answer(
     result = _result(
         answer,
         model_name,
-        prompt,
+        _normalized_prompt_trace(system_prompt, prompt),
         start,
         input_tokens,
         output_tokens,
@@ -451,22 +571,73 @@ def _enum_value(value: Any) -> str | None:
 
 def _provider_status(exc: Exception) -> ExecutionStatus:
     name = type(exc).__name__.lower()
-    message = str(exc).lower()
-    if "timeout" in name or "timeout" in message:
+    status_code = _http_error_status(exc)
+    if "timeout" in name or status_code == 408:
         return ExecutionStatus.TIMED_OUT
-    if "ratelimit" in name or "rate limit" in message or "429" in message:
+    if "ratelimit" in name or status_code == 429:
         return ExecutionStatus.RATE_LIMITED
     return ExecutionStatus.FAILED
 
 
+def _http_error_status(exc: Exception) -> int | None:
+    value = getattr(exc, "status_code", None)
+    if value is None:
+        value = getattr(getattr(exc, "response", None), "status_code", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599 else None
+
+
+def _provider_error_metadata(exc: Exception) -> dict[str, Any]:
+    status_code = _http_error_status(exc)
+    if status_code is not None:
+        retryable = status_code in {408, 409, 429} or 500 <= status_code <= 599
+    else:
+        retryable = (
+            _provider_status(exc) in {ExecutionStatus.TIMED_OUT, ExecutionStatus.RATE_LIMITED}
+            or isinstance(exc, httpx.NetworkError)
+            or "connectionerror" in type(exc).__name__.lower()
+        )
+    metadata: dict[str, Any] = {"retryable": retryable}
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    retry_after = headers.get("retry-after") if isinstance(headers, httpx.Headers) else None
+    if retryable and isinstance(retry_after, str):
+        retry_after = retry_after.strip()
+        if retry_after.isascii() and retry_after.isdigit() and len(retry_after) <= 3 and int(retry_after) <= 600:
+            metadata["retry_after_seconds"] = int(retry_after)
+        else:
+            # Never replace a longer/unsupported provider wait with a shorter
+            # local backoff. Raw header values are deliberately not persisted.
+            metadata.update({"retryable": False, "retry_suppressed": "provider_retry_after_not_within_safe_bounds"})
+    return metadata
+
+
 def _safe_error_code(exc: Exception) -> str:
     status = _provider_status(exc)
+    status_code = _http_error_status(exc)
+    specific = {
+        401: "provider_authentication_error",
+        403: "provider_permission_denied",
+        404: "provider_resource_not_found",
+    }.get(status_code or 0)
+    if specific:
+        return specific
+    if status_code is not None and 400 <= status_code < 500 and status_code not in {408, 409, 429}:
+        return "provider_invalid_request"
     return {ExecutionStatus.TIMED_OUT: "provider_timeout", ExecutionStatus.RATE_LIMITED: "provider_rate_limit"}.get(
         status, "provider_error"
     )
 
 
 def _safe_provider_message(exc: Exception) -> str:
+    code = _safe_error_code(exc)
+    specific = {
+        "provider_authentication_error": "The provider rejected authentication. Check this session's API key.",
+        "provider_permission_denied": "The provider denied access. Check account permissions, model access, and regional restrictions.",
+        "provider_resource_not_found": "The provider could not find the requested model or resource.",
+        "provider_invalid_request": "The provider rejected the request parameters. Check the selected model and configuration.",
+    }.get(code)
+    if specific:
+        return specific
     status = _provider_status(exc)
     if status == ExecutionStatus.TIMED_OUT:
         return "The provider did not respond before the configured timeout."

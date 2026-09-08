@@ -15,6 +15,7 @@ import pandas as pd
 from src import config
 from src.chunker import chunk_documents
 from src.document_loader import load_uploaded_document
+from src.document_loader import source_extraction_warnings as source_extraction_warnings
 from src.evaluator import normalize_eval_dataset
 from src.saved_responses import apply_response_reviews, evaluate_saved_responses
 from src.security import validate_upload_batch
@@ -230,9 +231,31 @@ def optional_review_text(value: Any) -> str:
 def read_review_workspace(data: bytes) -> dict[str, Any]:
     if len(data) > config.MAX_UPLOAD_BYTES:
         raise ValueError("The saved workspace exceeds the upload size limit.")
-    value = json.loads(data)
+    value = json.loads(data, object_pairs_hook=_unique_workspace_fields)
     validate_review_workspace(value)
     return value
+
+
+def _unique_workspace_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in fields:
+            raise ValueError(
+                "The saved workspace contains duplicate JSON fields. "
+                "Correct the file or export it again; restoring it could discard saved data."
+            )
+        fields[key] = value
+    return fields
+
+
+def _validate_workspace_case_ids(rows: list[dict[str, Any]], name: str) -> None:
+    for row in rows:
+        case_id = row.get("case_id")
+        if not isinstance(case_id, str) or not case_id.strip() or case_id != case_id.strip():
+            raise ValueError(
+                f"The workspace {name} contains an invalid case ID. "
+                "Use nonempty text without surrounding whitespace, with matching IDs in questions, answers and reviews."
+            )
 
 
 def validate_review_workspace(value: Any) -> None:
@@ -246,6 +269,7 @@ def validate_review_workspace(value: Any) -> None:
             )
         if len(rows) > config.MAX_DATASET_ROWS:
             raise ValueError(f"The workspace {name} list exceeds the supported size limit.")
+    _validate_workspace_case_ids(value["dataset"], "dataset")
     sources = value["sources"]
     if any(
         not isinstance(row.get("chunk_text"), str)
@@ -277,6 +301,7 @@ def validate_review_workspace(value: Any) -> None:
             raise ValueError(f"The {batch} batch needs a nonempty list of saved answers.")
         if len(responses) > config.MAX_DATASET_ROWS:
             raise ValueError(f"The {batch} answer batch exceeds the supported size limit.")
+        _validate_workspace_case_ids(responses, f"{batch} answers")
         for field in ("target_version", "captured_at"):
             if not isinstance(saved.get(field), str) or not saved[field].strip():
                 raise ValueError(f"The {batch} batch is missing its {field}.")
@@ -285,6 +310,7 @@ def validate_review_workspace(value: Any) -> None:
             raise ValueError(f"The {batch} reviews must be a list of review records.")
         if len(reviews) > config.MAX_DATASET_ROWS:
             raise ValueError(f"The {batch} review list exceeds the supported size limit.")
+        _validate_workspace_case_ids(reviews, f"{batch} reviews")
 
 
 def starter_pack() -> bytes:

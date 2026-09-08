@@ -75,6 +75,8 @@ jobs:
         run: |
           python ../browser_runtime/dependencies/build_dependencies.py --output .build/browser-vendor --cache .cache/browser-dependencies
           python scripts/assemble-runtime.py --source ..
+      - name: Verify browser retry handling without provider calls
+        run: node --test browser_runtime/tests/fetch-worker-retry.test.mjs
       - name: Check and build the web wrapper
         working-directory: browser_site
         run: |
