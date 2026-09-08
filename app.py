@@ -696,6 +696,7 @@ def navigate_to(page: str, message: str = "") -> None:
 def install_review_workspace(workspace: dict) -> None:
     baseline = evaluate_review_workspace(workspace)
     candidate = evaluate_review_workspace(workspace, "candidate")
+    st.session_state.pop("_show_resume_workspace", None)
     st.session_state.offline_workspace = workspace
     st.session_state.offline_baseline = baseline
     st.session_state.offline_candidate = candidate
@@ -841,7 +842,7 @@ def render_overview() -> None:
 
 
 def render_saved_import() -> None:
-    with st.expander("Resume a saved workspace", expanded=st.session_state.pop("_show_resume_workspace", False)):
+    with st.expander("Resume a saved workspace", expanded=st.session_state.get("_show_resume_workspace", False)):
         st.caption(
             "Upload the workspace file you downloaded earlier to continue with its sources, answers and reviews."
         )
@@ -1113,7 +1114,13 @@ def render_saved_retest(workspace: dict, baseline: pd.DataFrame, candidate: pd.D
 def render_saved_answers() -> None:
     st.title("Review saved answers")
     workspace = st.session_state.get("offline_workspace")
-    if not workspace:
+    resuming = st.session_state.get("_show_resume_workspace", False)
+    if workspace and resuming:
+        st.caption("Your current review stays available until another workspace is successfully restored.")
+        if st.button("Back to current review", key="cancel_resume"):
+            st.session_state.pop("_show_resume_workspace", None)
+            st.rerun()
+    if not workspace or resuming:
         st.progress(0.0, text="Step 1 of 3 · Add files, then review answers and compare replacements")
         render_saved_import()
         return
@@ -2496,6 +2503,8 @@ def main() -> None:
         st.caption(
             f"{len(st.session_state.chunks)} source passages · {len(st.session_state.eval_df)} evaluation questions"
         )
+    if page != "Review saved answers":
+        st.session_state.pop("_show_resume_workspace", None)
     if st.session_state.get("public_session_notice"):
         st.sidebar.info(st.session_state.public_session_notice)
         if st.sidebar.button("End session and clear my data"):
