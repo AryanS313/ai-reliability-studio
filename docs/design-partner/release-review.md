@@ -4,7 +4,7 @@
 
 ## Decision and scope
 
-**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's native tests, browser build and deployed-origin checks are complete within sections 12–13's scope. GitHub authorization has now succeeded; push, remote CI and merge remain to be recorded. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
+**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's native tests, browser build and deployed-origin checks are complete within sections 12–13's scope. The complete branch is pushed and the release PR is open; remote checks and merge remain in progress. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
 
 The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Section 12 records the integrated scope and outstanding release checks. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
 
@@ -331,3 +331,8 @@ These are engineering/product-owner assessments, not customer evidence.
 | Security and privacy | 7 | Verified isolation and safeguards; scoped browser advisories remain, without blanket security certification |
 | Design-partner readiness | 7 | Published bounded beta; GitHub push/remote CI pending, and partner acceptance not measured |
 | Portfolio strength | 7 | Credible ownership artifacts; discovery, adoption, repeated use and customer outcomes still need real evidence |
+
+
+### GitHub verification correction — Python 3.11 setup
+
+The first remote run passed browser distribution, PostgreSQL and the public container startup/sample checks. Python 3.11 stopped before tests because its runner inherited setuptools 79.0.1, reported under PYSEC-2026-3447 (two duplicate advisory records, one affected package). Python 3.12 passed the audit. The native requirements and constraints now install setuptools 83.0.0 on Python 3.11 so manual installation, bootstrap and CI receive the same correction. The audit is unchanged; no finding is suppressed. The corrected remote checks and merge still require observed completion. The published Wasm runtime is unaffected by this native bootstrap dependency.

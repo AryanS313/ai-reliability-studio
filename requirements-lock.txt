@@ -1,5 +1,7 @@
 # Resolved and audited Python 3.12 constraints, 2026-09-16.
 # Install: python -m pip install -r requirements-dev.txt
+# Python 3.11 also carries the patched environment bootstrap dependency.
+setuptools==83.0.0; python_version < "3.12"
 altair==5.5.0
 annotated-types==0.8.0
 anthropic==0.39.0
