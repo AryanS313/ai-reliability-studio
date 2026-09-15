@@ -311,7 +311,23 @@ The presentation refinement passed its focused regression. Final hosted observat
 - Sites source commit: `42fbd99c1b3483b95ad1c182ef5de5ab39f2a30c`; pushed to the existing Site source repository.
 - Sites version 8 published successfully to the existing public audience.
 - Published application source manifest: `0ee0ca87c77811bcc52adc751ab8d70c03b24f6356993e6bdb04c05f912d460c`, fetched from the live origin and matched to the reviewed build.
-- Live `/studio` returns HTTP 200 with COOP `same-origin`, COEP `require-corp`, CORP `same-origin`, a provider-restricted CSP and `nosniff`. The embedded public root boots to the guided start screen; its 32-case sample and a second independent tab were verified after publication.
+- Live `/studio` returns HTTP 200 with COOP `same-origin`, COEP `require-corp`, CORP `same-origin`, a provider-restricted CSP and `nosniff`. The embedded public root boots to the guided start screen; its 32-case sample and a second independent tab were verified after publication. Ending the sample session returned to an empty start screen without the prior project/results. No browser runtime errors were recorded.
 - GitHub publication is blocked by account authorization, not code or test failure. Complete `gh auth refresh --hostname github.com --scopes workflow`, then push `codex/design-partner-release`, create the prepared PR, run remote CI, and merge after checks pass. Do not remove workflow changes to evade the permission restriction.
 - Python 3.11 and the Docker image were not executed on this machine; their configured remote CI checks remain pending. Local Python 3.12 and PostgreSQL checks are complete.
 - Real provider credentials/account compatibility, domain calibration, independent first-time-user comprehension, adoption and customer outcomes remain unvalidated. The scoped browser dependency exceptions remain explicit in the security review.
+
+### Current candid ratings
+
+These are engineering/product-owner assessments, not customer evidence.
+
+| Dimension | /10 | Practical limit |
+|---|---:|---|
+| Product value | 7 | Recurring release-review job; willingness to adopt/pay unvalidated |
+| Positioning | 8 | Specific support-assistant audience; needs interview confirmation |
+| Onboarding | 8 | Working one-action sample and explicit prerequisites; cold browser download is substantial |
+| Usability | 7 | Plain-language primary path; advanced controls and document layouts still need independent usability testing |
+| Evaluation integrity | 8 | Versioned evidence and conservative verdicts; real domain calibration remains necessary |
+| Reliability | 7 | Broad automated and browser verification; sustained load and live-account behavior unverified |
+| Security and privacy | 7 | Verified isolation and safeguards; scoped browser advisories remain, without blanket security certification |
+| Design-partner readiness | 7 | Published bounded beta; GitHub permission/remote CI pending, and partner acceptance not measured |
+| Portfolio strength | 7 | Credible ownership artifacts; discovery, adoption, repeated use and customer outcomes still need real evidence |
