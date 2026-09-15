@@ -34,6 +34,8 @@ jobs:
       - name: Verify pinned browser dependency builder
         run: python -m unittest discover -s browser_runtime/dependencies -p 'test_*.py' -v
       - name: Verify synthetic workflow is explicitly blocked from launch
+        env:
+          APP_ACCESS_MODE: local
         shell: bash
         run: |
           set +e

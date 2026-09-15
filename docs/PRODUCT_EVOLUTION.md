@@ -7,6 +7,7 @@
 - The complete release branch, including the living product history, was pushed at `35fb348`. [The release PR](https://github.com/AryanS313/ai-reliability-studio/pull/12) is open; merge awaits passing checks.
 - GitHub verified browser distribution, PostgreSQL and non-root container startup/sample execution. Python 3.11 stopped at its dependency audit: the runner inherited vulnerable setuptools 79.0.1. The fix pins patched setuptools 83.0.0 for Python 3.11 installation paths; no advisory is ignored. The corrected remote run remains to be observed.
 - GitHub main still has the 8 September release. Sites version 8 continues serving the verified application `2026.09.16.1`; the dependency correction affects native Python 3.11 setup, not the published Wasm runtime.
+- The Python 3.12 test suite passed, then the synthetic CLI smoke command failed because it omitted the required private-local mode. CI now explicitly selects that mode; public session boundaries and the required no-launch verdict/exit code remain unchanged.
 - Customer interviews, unassisted comprehension, repeat use and commercial outcomes remain unmeasured. Software verification does not establish these outcomes.
 
 For every later meaningful milestone, replace this short delta section, refresh the delivery snapshot, and append to the milestone ledger near the end. Preserve earlier evidence and corrections rather than rewriting the past to fit the latest positioning.
@@ -395,6 +396,8 @@ Historical dates and implementation details are in section 4. Add a row after ea
 | 16 Sep — product-history documentation milestone | Reconstruct and preserve evidence-backed product evolution; make future PM handoffs self-contained | Git blobs, version declarations, remote main/PR records and release receipts reconciled; document links/structure reviewed | Historical customer motives not documented, independent product demand and pending GitHub publication/CI | Reporting discipline; May sample counts, version-stage labels and August/September attribution corrected; no application behavior change |
 
 | 16 Sep — complete branch push and first remote checks | Pushed `35fb348`, opened the release PR; repair runner-inherited setuptools 79.0.1 through a conditional 83.0.0 pin | Remote browser build, PostgreSQL and container startup/sample passed; Python 3.11 audit exposed the inherited tool before tests | Corrected Python checks and merge; customer evidence remains absent | Delivery/reproducibility; branch publication is verified, but merge is not yet complete; audit remains enforced |
+
+| 16 Sep — CLI smoke configuration correction | The standalone CI command omitted explicit private-local mode after public mode became the safe default; set APP_ACCESS_MODE only on that smoke step | Python 3.12 suite passed before this separate smoke failure; exact corrected command checked locally | Corrected complete remote run and merge | Reproducibility/security; no public-session bypass or weaker synthetic assertion |
 
 Every future row must identify the prior state, change, reason, evidence type, validation, remaining uncertainty and affected positioning/workflow/integrity/security/deployment claims. Record removals, restrictions, mistakes and contrary evidence as deliberately as additions. Do not overwrite an old measured baseline with a new result.
 
