@@ -1,158 +1,132 @@
 # AI Reliability Studio
 
-[**Open the live Streamlit demo →**](https://ai-reliability-studio.streamlit.app/)
+**Know what to fix before your next support-assistant release.**
 
-> The hosted demo uses synthetic scenarios for onboarding. Synthetic results demonstrate the workflow and are not model-quality or launch-readiness evidence.
+A design-partner beta for small product teams shipping assistants grounded in policies and knowledge articles. Run approved test cases against a staging assistant, inspect consequential failures and source evidence, then compare the next revision with its baseline.
 
-AI Reliability Studio is a production-oriented evaluation platform for testing AI assistants against versioned datasets, source documents, prompts, models, and real target APIs. It separates model-quality evidence from infrastructure failures and will not convert a synthetic demo into a launch-readiness claim.
+[Open the live demo](https://ai-reliability-studio.streamlit.app/) · [Product brief](docs/design-partner/product-brief.md) · [Setup and deployment](docs/DEPLOYMENT.md)
 
-The platform answers a deliberately harder question than “does the chatbot look good?”:
+> This repository contains local changes for review. The live deployment has not been updated by this work. Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
 
-> For this exact prompt, dataset, document snapshot, retrieval configuration, model, and target version, what evidence supports—or blocks—a controlled launch?
+## Start locally
 
-## Trust guarantees
-
-- Synthetic runs are always labeled `Synthetic demonstration — not model-quality evidence` and never receive a launch verdict.
-- Provider, timeout, authentication, rate-limit, and invalid-response failures are stored as execution errors and are excluded from quality averages.
-- Deterministic contradictions involving negation, dates, quantities, policy exceptions, or unauthorized decisions cap the quality score and cannot be overridden by an advisory LLM judge.
-- Citations earn support credit only when they resolve to retrieved evidence and support an assessed claim. A source title alone is insufficient.
-- Every read, write, export, and destructive operation is workspace scoped. Production mode refuses unauthenticated single-user operation.
-- Prompts, datasets, documents, targets, and run manifests are immutable/versioned inputs. Historical results remain reproducible.
-
-## Capabilities
-
-- Three target types: deterministic synthetic scenarios, direct foundation-model providers, and versioned external HTTP APIs.
-- External target templates with secret references, authentication headers, JSON response paths, citation/escalation/tool-call mappings, timeouts, rate-limit handling, and health checks.
-- Structured document extraction and provenance for PDF, DOCX, PPTX, HTML, RTF, Excel, CSV/TSV, JSON/JSONL, text, and Markdown.
-- Structural chunking, exact deduplication, hybrid lexical/TF-IDF retrieval, metadata filters, thresholds, and retrieval metrics (recall, precision, hit rate, MRR, nDCG).
-- Strict dataset validation with row-level errors, stable case IDs, multiple acceptable answers, unacceptable answers, expected passages, rubric fields, tags, severity, and escalation destination/urgency.
-- Bounded concurrent execution with retries, exponential backoff, cancellation, resumable checkpoints, caching, and idempotency keys.
-- Claim-level supported/unsupported/contradicted/unverifiable assessments with document version, chunk, page/section, and text spans.
-- Candidate-specific gates, bootstrap confidence intervals, baseline comparisons, regression detection, review queues, redacted production-log ingestion, drift calculations, and JSON/CSV/HTML reports.
-- Reachable held-out human calibration workflow with per-label confusion matrices, precision/recall/F1/error rates, immutable threshold versions, and insufficient-evidence gating.
-- Streamlit UI, non-interactive CLI, additive SQLite migrations, and PostgreSQL schema with row-level security policies.
-
-## Quick start: local demonstration
-
-Python 3.11 and 3.12 are the supported runtimes. Python 3.9 is intentionally unsupported because its common macOS
-LibreSSL builds are incompatible with the pinned urllib3 generation. CI verifies both supported minor versions.
+Python **3.11 or 3.12** is required. Python 3.9 is unsupported. The current local verification used **Python 3.12.14**; Python 3.11 dependency resolution was checked with a dry run, but its runtime suite was not executed locally. CI is configured to exercise both versions after the changes are approved and pushed.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -c requirements-lock.txt -r requirements.txt
-cp .env.example .env
-streamlit run app.py
+cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio
+bash scripts/bootstrap.sh --dev
+APP_ACCESS_MODE=public-demo .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
 ```
 
-In the UI, select **Load Sample Fintech Demo**, inspect **Target Setup**, and run the generic synthetic target. The result demonstrates the workflow only; the product deliberately blocks a readiness verdict. Use **Evaluator Calibration** to import/edit independent held-out human labels; until its configured requirements are met, real candidates remain insufficiently calibrated.
+Open [localhost:8501](http://localhost:8501) and choose **Try the sample review**. It runs 32 fictional cases and opens their decision summary without an account, API key, or external call.
 
-To run the complete development checks:
+The bootstrap script reuses a supported `.venv`, creates one if absent, and refuses an existing unsupported or broken environment without replacing it. It never creates or overwrites `.env`. For a new environment, set `PYTHON_BIN=/absolute/path/to/python3.12` if the interpreter is not on your path. `bash scripts/bootstrap.sh --check` performs a read-only runtime preflight. Omit `--dev` to install only application dependencies.
+
+## Evaluate your own assistant
+
+Stop the sample server, then launch the persistent **private local workspace**:
 
 ```bash
-python -m pip install -r requirements-dev.txt
-ruff check .
-ruff format --check .
-mypy src
-pytest
+APP_ACCESS_MODE=local .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
 ```
 
-## Evaluate a real target
+Use approved, non-sensitive test data on a trusted computer. Local mode is for a trusted operator; it is not authenticated multi-user hosting. The UI enforces a data-handling acknowledgment before custom work. The six destinations follow the release workflow:
 
-Choose one of these paths in **Target Setup**:
+| Step | What to do |
+|---|---|
+| **Start** | Try the example or start a project. |
+| **Prepare** | Create/reopen a project, add source documents and expected-behavior cases, then save a prompt. Resolve validation warnings. |
+| **Connect** | Save the staging assistant's endpoint, request field, response field, and session credential; explicitly authorize one connection check. |
+| **Evaluate** | Review the candidate, cases, maximum attempts, retry settings and data flow; authorize real calls and run. |
+| **Review** | Separate execution errors from answer failures; inspect evidence, missing calibration and next actions; record a decision and export redacted evidence. |
+| **History** | Reopen prior evidence and compare a revision using compatible cases and evaluator settings. |
 
-1. **Foundation model** — select a configured OpenAI, Google Gemini, or Anthropic model and provide its key through the environment, Streamlit secrets, or the current browser session.
-2. **External API** — import a versioned configuration such as [`examples/external_target.json`](examples/external_target.json). Secret values must use `secret://NAME` references; raw credentials are rejected from persisted configuration.
+Evaluator calibration, retrieval testing, detailed failure analysis, and workspace settings are available under **Advanced tools**.
 
-The preflight summary shows the exact candidate count, unique cases, total external calls, concurrency, retry policy, and estimated cost where pricing is known. Real calls require explicit confirmation.
+### A simple HTTPS connection: no configuration file required
 
-There is no provider-to-mock fallback. If a key or endpoint is unavailable, the execution is recorded as an error and is not scored.
+Ask the assistant's engineer for a **read-only staging endpoint**. For an endpoint accepting `{"question":"When is a refund available?"}` and returning `{"answer":"Within 30 days, subject to the policy exceptions."}`, fill the Connect form as follows:
 
-## Dataset schema
+| Field | Example |
+|---|---|
+| Assistant endpoint | `https://staging.example.com/answer` |
+| Question field in your request | `question` |
+| Answer field in the response | `$.answer` |
+| Authentication | Bearer token, custom secret header, or no authentication, as agreed with its owner |
+| Session-only token or key | Enter the credential in the password field; it is not saved with the target |
 
-Use CSV, TSV, XLS/XLSX, JSON, or JSONL. Legacy columns remain accepted, while the versioned schema supports richer fields:
+Saving the connection makes no request. A configured health path supports **Check connection**; without one, **Send one test request** sends the displayed connectivity question only after consent. A successful check confirms connectivity/response shape, not answer quality.
 
-| Field | Required | Purpose |
-|---|---:|---|
-| `question` | yes | User input under evaluation |
-| `expected_answer` or `expected_answers` | yes for answer cases | One or more acceptable reference behaviors |
-| `expected_source` or `expected_sources` | no | Expected document/source names |
-| `expected_passages` | no | Exact passage/provenance expectations |
-| `should_escalate` | yes | Strict boolean escalation expectation |
-| `case_id` | generated if absent | Stable identity across runs |
-| `category`, `severity`, `tags` | recommended | Coverage and gating dimensions |
-| `unacceptable_answers` | no | Explicit prohibited outcomes |
-| `rubric` | no | Required and forbidden scoring constraints |
-| `escalation_destination`, `escalation_urgency` | no | Structured escalation expectations |
-| `mock_scenario` | synthetic only | Generic deterministic scenario selection |
+Optional response mappings can expose citations, escalation, and the reported model. Citations need resolvable source or chunk provenance; naming a document is not proof that it supports an answer. Without your assistant's retrieval trace, Studio's reference-document retrieval is **not** a measurement of the assistant's internal retriever. An endpoint returning text only can still be inspected, but missing citation, retrieval, cost, or identity evidence stays missing.
 
-See [`examples/evaluation_dataset_v1.jsonl`](examples/evaluation_dataset_v1.jsonl) and [`examples/adversarial_templates.jsonl`](examples/adversarial_templates.jsonl).
+For nested request formats or tool-call/usage mappings, your engineer can prepare the [external target example](examples/external_target.json). Import it under **Connection settings from your engineer**, review the form, then save the connection. Imported settings remain a draft until saved; credentials still belong in the session-only password field. Endpoints are subject to destination/header/size safeguards. Action-taking agents are outside this beta's supported scope.
 
-## Scoring and launch gates
+Alternatively, choose **Direct foundation model** in Connect. A session key or approved private environment key calls the selected provider with Studio's retrieved context. This tests that model/prompt setup, not an existing application's own retrieval. Direct-provider adapters use official provider endpoints and ignore ambient base-URL/proxy routing. Never paste credentials into a prompt, dataset, or saved JSON configuration.
 
-Quality scoring is multi-dimensional and explainable:
+## What makes the evidence reviewable
 
-- expected-behavior correctness, including multiple references and rubrics;
-- source retrieval quality independent of answer quality;
-- citation presence, source validity, claim support, and completeness;
-- claim-level groundedness with exact provenance;
-- escalation decision, destination, reason, and urgency;
-- multi-label safety failures, latency, cost, and infrastructure error rate.
+- Synthetic runs remain labeled and cannot receive a launch verdict.
+- Failed target calls receive no quality score and remain visible in execution-error gates. A missing key or outage never falls back to a synthetic answer.
+- Deterministic contradictions and critical safety failures override averages. Credential echoes are discarded and recorded as critical privacy evidence.
+- Each candidate retains versioned prompts, cases, sources, target, retrieval, evaluator and gate configuration. Requested model settings are separate from provider-reported identity and effective sampling.
+- Readiness requires applicable held-out human calibration for every required label. A small, incomplete, or unrepresentative dataset is not repaired by a high average score.
+- Comparisons become inconclusive when versions/case sets are incompatible. A missing or failed candidate case cannot masquerade as a fixed regression.
+- JSON, CSV and HTML reports redact detected personal data and secrets. Review exports before sharing: automated redaction cannot identify every confidential detail.
 
-Default weighting preserves the original product’s intent: correctness 30%, retrieval 20%, citation 20%, groundedness 20%, and escalation 10%. Weights and gate thresholds are configurable. Hard contradictions and critical safety failures override averages. A candidate is evaluated independently for every prompt/model/target tuple; results from one candidate never rescue another.
+The primary review explains each release check, finding and comparison in plain language. Exact versions are saved automatically. **Export evidence → Download readable report** creates a report for team review; optional machine-readable files are under **Evidence files for your engineer**.
 
-The verdict taxonomy is:
+Quality dimensions include correctness, reference retrieval, citation support, groundedness, escalation, safety, latency and cost. Deterministic text scoring has semantic limits; inspect uncertain and severe cases with a domain owner. See the [evaluation methodology](docs/EVALUATION_METHODOLOGY.md).
 
-- `Ready for Controlled Beta`
-- `Ready for Internal Testing`
-- `Needs Improvement`
-- `Not Ready`
-- `Insufficient Evidence`
-- `Synthetic demonstration — no launch verdict`
+## Bring representative cases
 
-Read [`docs/EVALUATION_METHODOLOGY.md`](docs/EVALUATION_METHODOLOGY.md) before interpreting results.
+Use the question editor or downloadable template in **Prepare → Cases**. The editor presents ordinary question, answer, source, topic, impact and human-handoff fields; stable identifiers and advanced imported rules are preserved automatically. CSV, TSV, Excel, JSON and JSONL are supported, with row-level validation. Two import schemas are accepted:
 
-## Non-interactive CI gate
+- **Legacy:** `question`, `expected_answer`, `expected_source`, `category`, `should_escalate`.
+- **Versioned:** `case_id`, `question`, `category`, `expected_behavior`, `severity`, `tags`, plus the reference answers and escalation expectations required for that behavior.
+
+Additional fields support multiple acceptable answers/sources, prohibited answers, exact passages, rubrics, coverage rationale and held-out splits. See [versioned examples](examples/evaluation_dataset_v1.jsonl). Preserve stable case IDs across releases, include policy exceptions and previous incidents, and keep independent held-out cases for calibration. Sample cases are fictional and do not represent your users.
+
+## Verification and CLI
 
 ```bash
-python -m src.cli run \
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/mypy src
+.venv/bin/pytest
+.venv/bin/python -m pip check
+.venv/bin/python -m pip_audit --strict
+```
+
+The [release review](docs/design-partner/release-review.md) records the final test counts, coverage, dependency checks, browser observations and remaining limitations. A normal `pytest` run without `TEST_POSTGRES_URL` skips service tests; see [service-test instructions](docs/DEPLOYMENT.md#verification-and-ci). Local checks do not establish live-account connectivity, partner adoption, or enterprise infrastructure readiness.
+
+For a synthetic CLI gate:
+
+```bash
+mkdir -p .local-verification
+APP_ACCESS_MODE=local .venv/bin/python -m src.cli run \
   --dataset examples/evaluation_dataset_v1.jsonl \
   --document data/sample_docs/refund_policy.md \
   --prompt prompts/current_prompt_sample.md \
   --model mock-model \
   --gate-config examples/reliability_gate.json \
-  --output report.json
+  --database .local-verification/cli-example.sqlite3 \
+  --output .local-verification/report.json
 ```
 
-Exit codes are `0` for passing real-target gates, `2` for a gate failure (including synthetic evidence), `3` for execution errors, and `4` for invalid configuration. Reports support JSON, CSV, and HTML.
+A synthetic report intentionally exits **2** because it cannot pass a real launch gate. Exit codes are 0 for passing real gates, 2 for gate failure or a synthetic-only run, 3 for real execution errors (before evaluating the gate outcome), and 4 for handled configuration errors. For actual assistants use `--external-target`; for a provider use `--model` and `--api-key-env NAME`. Run these only against approved staging targets with narrowly scoped secrets. The CLI writes a private local database and does not implement a hosted tenant API.
 
-## Storage and deployment modes
+## Release boundary
 
-- **Local development/demo:** SQLite with additive migrations and a single local workspace.
-- **Production:** PostgreSQL, trusted proxy/OIDC-proxy authentication, provisioned users/memberships, TLS termination, and row-level security from [`migrations/postgres.sql`](migrations/postgres.sql).
+| Mode | Boundary |
+|---|---|
+| `public-demo` — default | Anonymous sample only, separate in-memory session, no custom uploads or real calls. New sessions/process restarts do not restore earlier data. |
+| `local` | Persistent SQLite on a trusted computer, loopback binding, one trusted operator, approved inputs and credentials. |
+| `authenticated` | Shared hosting requires validated identity proxy/provisioning, managed PostgreSQL/RLS, secure ingress/egress and operational controls. Configuration alone does not establish readiness. |
 
-`APP_ENV=production` with `AUTH_MODE=single-user` fails closed. SQLite is not presented as multi-user production storage. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), [`docs/MIGRATION_GUIDE.md`](docs/MIGRATION_GUIDE.md), and [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md).
+The bundled queue, artifact store, schedule registry, malware scanner and OCR adapters are local/unavailable foundations. Durable workers, managed identity/database/storage, scanning, retention enforcement, monitoring, backups and recovery need deployment-specific implementation and validation. Image-only documents need an OCR extension; warnings are preserved rather than invented text. Public memory can be retained by process/OS mechanisms and must not be treated as confidential storage.
 
-## Architecture and operations
-
-The Streamlit UI is an adapter over domain services rather than the source of truth. Target adapters feed the execution engine; successful responses move through retrieval/evaluation and candidate aggregation; repositories persist immutable inputs, executions, scores, reports, review actions, and audit events.
-
-Further reading:
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
-- [`docs/IMPLEMENTATION_REPORT.md`](docs/IMPLEMENTATION_REPORT.md)
-- [`SECURITY.md`](SECURITY.md)
-- [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- [`CHANGELOG.md`](CHANGELOG.md)
-
-## Known limits
-
-- The bundled dense-retrieval default is lightweight TF-IDF; a sentence-transformer embedder can be injected when that dependency is deployed.
-- Image-only PDFs require an external OCR extension. Extraction warnings are preserved instead of inventing text.
-- The bundled job queue, artifact store, schedule registry, malware scanner, and OCR adapters are explicit local/unavailable foundations and are not production-ready. Durable workers and managed queue/object-storage/scheduling/scanning/OCR backends remain deployment responsibilities.
-- PostgreSQL migration/RLS tests run in the optional CI service profile, but must still be repeated against the deployment’s exact managed PostgreSQL version, application role, and identity/provisioning path.
+Product events stay in the authorized workspace audit log with fixed choices, counts and durations; there is no external analytics collector. Event payloads exclude prompts, document text, answers, credentials and personal/contact fields. The audit envelope retains authorization metadata and is not claimed to be anonymous. See [security review](docs/design-partner/security-review.md), [architecture](docs/ARCHITECTURE.md), and the [36-metric success framework](docs/design-partner/success-metrics.md).
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [LICENSE](LICENSE).

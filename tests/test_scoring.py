@@ -40,7 +40,13 @@ def test_citation_and_escalation_correctness():
             "chunk_text": "Manual loan approval cannot be provided and requests require credit review.",
         }
     ]
-    assert citation_correctness_score(answer, "Loan Rejection SOP", chunks) == 1
+    # A display title establishes presence, not exact evidence provenance.
+    assert citation_correctness_score(answer, "Loan Rejection SOP", chunks) == 0
+    cited = (
+        "Manual loan approval cannot be provided and requests require credit review.\n"
+        "Citation: [source:Loan Rejection SOP chunk:loan-1]"
+    )
+    assert citation_correctness_score(cited, "Loan Rejection SOP", chunks) == 1
     assert detect_escalation(answer) is True
     assert escalation_correctness_score(answer, True) == 1
 

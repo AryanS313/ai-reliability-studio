@@ -221,6 +221,15 @@ class ExecutionEngine:
             if response.status == ExecutionStatus.PASSED:
                 self.cache.set(record.execution_key, response)
                 break
+            if (
+                response.http_status is not None
+                and 400 <= response.http_status < 500
+                and response.http_status not in {408, 429}
+            ):
+                record.metadata["retry_skipped"] = (
+                    "Non-transient client error; correct authentication or request configuration before retrying."
+                )
+                break
             if response.status not in RETRYABLE_STATUSES or attempt >= self.policy.max_retries:
                 break
             delay = min(self.policy.maximum_backoff_seconds, self.policy.backoff_seconds * (2**attempt))

@@ -24,6 +24,9 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m pip_audit --strict
+      - run: PYTHON_BIN=python bash scripts/bootstrap.sh --check
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy src
@@ -74,6 +77,7 @@ jobs:
           --health-retries 10
     env:
       TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ars_test
+      TEST_POSTGRES_ALLOW_RESET: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -82,4 +86,5 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
       - run: pytest -m postgres tests/test_postgres_integration.py --no-cov -q

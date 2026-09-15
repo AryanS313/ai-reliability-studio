@@ -99,6 +99,8 @@ class CitationAssessment:
     supports_claim: bool
     completeness: float
     citations: tuple[dict[str, Any], ...] = ()
+    # No verified credit may mean either an established defect or unresolved semantics.
+    support_state: str = "unverified"
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,10 @@ def postgres_repository():
     database_url = os.getenv("TEST_POSTGRES_URL", "")
     if not database_url:
         pytest.skip("Set TEST_POSTGRES_URL to run the optional PostgreSQL integration profile.")
+    if os.getenv("TEST_POSTGRES_ALLOW_RESET") != "true":
+        pytest.fail(
+            "PostgreSQL tests reset the public schema. Set TEST_POSTGRES_ALLOW_RESET=true for a disposable database only."
+        )
     psycopg = pytest.importorskip("psycopg")
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
@@ -135,3 +139,59 @@ def test_repository_authorization_rejects_forged_context(postgres_repository):
     forged = WorkspaceContext(first.user_id, second.workspace_id, Role.OWNER)
     with pytest.raises(AuthorizationError):
         repository.create_project(forged, {"name": "forged"})
+
+
+def test_project_restoration_result_retry_and_role_security(postgres_repository):
+    repository = postgres_repository
+    context = repository.create_workspace("partner-owner@example.com", "Partner regression")
+    project = repository.create_project(context, {"name": "Partner project"})
+    repository.create_dataset_version(context, project, "Cases", [{"case_id": "first"}])
+    repository.create_dataset_version(context, project, "Cases", [{"case_id": "latest"}])
+    repository.create_target_version(
+        context, project, "Assistant", "external_api", {"endpoint": "https://example.test"}
+    )
+    restored = repository.load_project_configuration(context, project)
+    assert restored["dataset_records"] == [{"case_id": "latest"}]
+    assert restored["external_target_config"]["endpoint"] == "https://example.test"
+    run = repository.create_run(
+        context,
+        run_name="Retry",
+        model_name="model",
+        mode="batch",
+        unique_case_count=1,
+        total_executions=1,
+        project_id=project,
+    )
+    result = {
+        "case_id": "latest",
+        "question": "Question",
+        "prompt_version": "p1",
+        "target_version": "t1",
+        "execution_status": "passed",
+        "attempt_count": 3,
+        "provider": "external",
+        "overall_score": 0.5,
+    }
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        ids = list(pool.map(lambda _: repository.save_result(context, run, result), range(8)))
+    assert len(set(ids)) == 1
+    with repository.connection() as conn:
+        assert (
+            conn.execute("SELECT completed_executions FROM eval_runs WHERE id = %s", (run,)).fetchone()[
+                "completed_executions"
+            ]
+            == 1
+        )
+        execution = conn.execute("SELECT attempt_count, provider FROM executions WHERE run_id = %s", (run,)).fetchone()
+        assert execution["attempt_count"] == 3
+        assert execution["provider"] == "external"
+    admin_id = repository.add_member(context, "partner-admin@example.com", Role.ADMIN)
+    forged_owner = WorkspaceContext(admin_id, context.workspace_id, Role.OWNER)
+    with pytest.raises(AuthorizationError, match="Only owners"):
+        repository.add_member(forged_owner, "partner-new@example.com", Role.OWNER)
+    with pytest.raises(AuthorizationError, match="Only owners"):
+        repository.add_member(forged_owner, "partner-owner@example.com", Role.VIEWER)
+    with repository.connection() as conn:
+        conn.execute("UPDATE users SET disabled_at = now() WHERE id = %s", (context.user_id,))
+    with pytest.raises(AuthorizationError):
+        repository.list_projects(context)

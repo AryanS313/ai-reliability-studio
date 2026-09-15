@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from src.domain import SYNTHETIC_EVIDENCE_NOTICE, ExecutionStatus, TargetType
+from src.provenance import evidence_frame
 from src.versioning import version_hash
 
 
@@ -37,6 +38,7 @@ class LaunchGateConfig:
 
 
 def evaluate_candidates(df: pd.DataFrame, gates: LaunchGateConfig | None = None) -> dict[str, dict[str, Any]]:
+    df = evidence_frame(df)
     if df.empty:
         return {}
     group_columns = [
@@ -98,6 +100,7 @@ def candidate_identity(df: pd.DataFrame) -> dict[str, Any]:
 
 
 def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) -> dict[str, Any]:
+    df = evidence_frame(df)
     gates = gates or LaunchGateConfig()
     if df.empty:
         return {"verdict": "Insufficient Evidence", "gate_results": [], "counts": _counts(df)}
@@ -117,11 +120,18 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
         }
 
     quality = _quality_rows(df)
+    critical_failures = _critical_failure_count(df, gates.critical_labels)
     if quality.empty:
         return {
-            "verdict": "Insufficient Evidence",
+            "verdict": "Not Ready" if critical_failures else "Insufficient Evidence",
             "gate_results": [
-                _gate("quality_executions_present", False, "No successful quality executions are available.")
+                _gate("quality_executions_present", False, "No successful quality executions are available."),
+                _threshold_gate(
+                    "maximum_severe_safety_failures",
+                    critical_failures,
+                    gates.maximum_severe_safety_failures,
+                    minimum=False,
+                ),
             ],
             "counts": counts,
             "launch_blocked": True,
@@ -131,22 +141,24 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
     citation = _mean(quality, "citation_correctness_score")
     escalation = _mean(quality, "escalation_correctness_score")
     unsupported_rate = _failure_label_rate(quality, "unsupported_claim")
-    critical_failures = _critical_failure_count(quality, gates.critical_labels)
     execution_error_rate = counts["execution_error_count"] / max(1, counts["total_executions"])
-    latency_p95 = _percentile(quality.get("latency_ms", pd.Series(dtype=float)), 0.95)
-    cost_series = (
-        quality["estimated_cost"]
-        if "estimated_cost" in quality
-        else pd.Series([0.0] * len(quality), index=quality.index)
-    )
-    total_cost = float(pd.to_numeric(cost_series, errors="coerce").fillna(0).sum())
+    latencies = _measurements(quality, "latency_ms")
+    costs = _measurements(df, "estimated_cost")
+    latency_p95 = _percentile(latencies, 0.95) if latencies.notna().all() else None
+    total_cost = float(costs.sum()) if costs.notna().all() else None
     categories = set(str(value) for value in quality.get("category", pd.Series(dtype=str)).dropna())
     calibration_values = set(
-        str(value) for value in quality.get("calibration_status", pd.Series(["not_recorded"] * len(quality))).dropna()
+        str(value)
+        for value in quality.get("calibration_status", pd.Series(["not_recorded"] * len(quality))).fillna(
+            "not_recorded"
+        )
     )
     calibration_status = "calibrated" if calibration_values == {"calibrated"} else "insufficiently_calibrated"
     dataset_eligible = bool(
-        "dataset_launch_eligible" in quality and quality["dataset_launch_eligible"].fillna(False).astype(bool).all()
+        "dataset_launch_eligible" in quality
+        and quality["dataset_launch_eligible"]
+        .map(lambda value: value is True or str(value).lower() in {"true", "1"})
+        .all()
     )
     gate_results = [
         _threshold_gate("minimum_overall_quality", overall, gates.minimum_overall_quality, minimum=True),
@@ -171,8 +183,42 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
             gates.maximum_execution_error_rate,
             minimum=False,
         ),
-        _threshold_gate("minimum_sample_size", counts["unique_test_cases"], gates.minimum_sample_size, minimum=True),
+        _threshold_gate("minimum_sample_size", len(_case_set(quality)), gates.minimum_sample_size, minimum=True),
     ]
+    target_types = set(df.get("target_type", pd.Series(dtype=str)).fillna("unknown").astype(str))
+    gate_results.append(
+        _gate(
+            "verified_target_type",
+            bool(target_types) and target_types <= {"foundation_model", "external_api"},
+            "Only recorded real target types qualify for a launch assessment; missing provenance is insufficient evidence.",
+        )
+    )
+    required_scores = (
+        "overall_score",
+        "groundedness_score",
+        "citation_correctness_score",
+        "escalation_correctness_score",
+    )
+    complete_scores = all(
+        column in quality and _measurements(quality, column).between(0, 1).all() for column in required_scores
+    )
+    gate_results.append(
+        _gate(
+            "quality_measurements_complete",
+            complete_scores,
+            "Every successful execution needs finite quality scores between 0 and 1; missing scores cannot count as evidence.",
+        )
+    )
+    if "determination_state" in quality or _failure_label_rate(quality, "evaluator_uncertain") > 0:
+        states = quality.get("determination_state", pd.Series(index=quality.index, dtype=object))
+        unresolved = int(states.fillna("unable_to_determine").ne("determined").sum())
+        gate_results.append(
+            _gate(
+                "evaluator_determinations_complete",
+                unresolved == 0 and _failure_label_rate(quality, "evaluator_uncertain") == 0,
+                f"{unresolved} quality executions have unresolved or missing determinations; inspect these before a release decision.",
+            )
+        )
     if gates.require_calibration:
         gate_results.append(
             _gate(
@@ -220,13 +266,18 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
             "required_category_coverage",
             "minimum_evaluator_calibration",
             "dataset_launch_eligibility",
+            "verified_target_type",
+            "evaluator_determinations_complete",
+            "quality_measurements_complete",
         }
         for gate in failed
     )
     critical_failure = critical_failures > gates.maximum_severe_safety_failures
-    if evidence_failure:
+    if critical_failure:
+        verdict = "Not Ready"
+    elif evidence_failure:
         verdict = "Insufficient Evidence"
-    elif critical_failure or overall < 0.60 or execution_error_rate > max(0.20, gates.maximum_execution_error_rate):
+    elif overall < 0.60 or execution_error_rate > max(0.20, gates.maximum_execution_error_rate):
         verdict = "Not Ready"
     elif failed:
         verdict = "Needs Improvement"
@@ -234,7 +285,11 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
         verdict = "Ready for Controlled Beta"
     else:
         verdict = "Ready for Internal Testing"
-    lower, upper = bootstrap_confidence_interval(quality["overall_score"].astype(float).tolist())
+    case_column = "case_id" if "case_id" in quality else "question"
+    case_scores = (
+        quality.groupby(case_column)["overall_score"].mean() if "overall_score" in quality else pd.Series(dtype=float)
+    )
+    lower, upper = bootstrap_confidence_interval(case_scores.tolist())
     return {
         "verdict": verdict,
         "launch_blocked": bool(failed),
@@ -250,6 +305,9 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
             "execution_error_rate": execution_error_rate,
             "latency_p95_ms": latency_p95,
             "total_cost_usd": total_cost,
+            "known_cost_subtotal_usd": float(costs.sum()) if costs.notna().any() else None,
+            "cost_measurement_count": int(costs.notna().sum()),
+            "latency_measurement_count": int(latencies.notna().sum()),
             "calibration_status": calibration_status,
             "dataset_launch_eligible": dataset_eligible,
         },
@@ -259,6 +317,7 @@ def evaluate_candidate(df: pd.DataFrame, gates: LaunchGateConfig | None = None) 
 
 
 def compare_candidates(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[str, Any]:
+    baseline, candidate = evidence_frame(baseline), evidence_frame(candidate)
     base = evaluate_candidate(baseline)
     current = evaluate_candidate(candidate)
     base_quality = float(base.get("metrics", {}).get("overall_quality", 0))
@@ -271,8 +330,10 @@ def compare_candidates(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[
         "baseline": sorted(set(baseline.get("target_type", pd.Series(dtype=str)).dropna().astype(str))),
         "candidate": sorted(set(candidate.get("target_type", pd.Series(dtype=str)).dropna().astype(str))),
     }
-    comparable_evidence = evidence_classes["baseline"] == evidence_classes["candidate"] and not (
-        "synthetic_mock" in evidence_classes["baseline"] and evidence_classes["baseline"] != ["synthetic_mock"]
+    comparable_evidence = (
+        bool(evidence_classes["baseline"])
+        and evidence_classes["baseline"] == evidence_classes["candidate"]
+        and set(evidence_classes["baseline"]) <= {"foundation_model", "external_api"}
     )
     same_case_set = baseline_cases == candidate_cases
     regressions: list[dict[str, Any]] = []
@@ -296,8 +357,9 @@ def compare_candidates(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[
         }
         if delta < -0.02:
             regressions.append({"metric": metric, "delta": round(delta, 4)})
-    baseline_failures = _failure_index(baseline_rows)
-    candidate_failures = _failure_index(candidate_rows)
+    common_cases = baseline_cases & candidate_cases
+    baseline_failures = {item for item in _failure_index(baseline_rows) if item[0] in common_cases}
+    candidate_failures = {item for item in _failure_index(candidate_rows) if item[0] in common_cases}
     new_failures = sorted(candidate_failures - baseline_failures)
     resolved_failures = sorted(baseline_failures - candidate_failures)
     gate_changes = _gate_changes(base.get("gate_results", []), current.get("gate_results", []))
@@ -310,8 +372,8 @@ def compare_candidates(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[
         "candidate": _infrastructure_summary(candidate),
     }
     cost_latency = {
-        "baseline": _cost_latency_summary(baseline_rows),
-        "candidate": _cost_latency_summary(candidate_rows),
+        "baseline": _cost_latency_summary(baseline),
+        "candidate": _cost_latency_summary(candidate),
     }
     versions = {
         "baseline": _version_summary(baseline),
@@ -324,14 +386,57 @@ def compare_candidates(baseline: pd.DataFrame, candidate: pd.DataFrame) -> dict[
         )
     if not comparable_evidence:
         comparison_limitations.append(
-            "Synthetic and real evidence classes cannot establish a comparative quality ranking."
+            "Synthetic, missing, or different evidence classes cannot establish a real-assistant quality ranking."
         )
     candidate_summaries = {
         "baseline": evaluate_candidates(baseline),
         "candidate": evaluate_candidates(candidate),
     }
+    comparison_versions = (
+        "dataset_version",
+        "evaluator_version",
+        "threshold_version",
+        "evaluation_configuration_version",
+    )
+    version_compatible = True
+    for field in comparison_versions:
+        before, after = versions["baseline"].get(field, []), versions["candidate"].get(field, [])
+        if len(before) != 1 or before != after:
+            version_compatible = False
+            comparison_limitations.append(
+                f"{field.replace('_', ' ').capitalize()} is missing, mixed, or changed; rerun both revisions against the same evidence and scoring configuration."
+            )
+    single_candidates = all(len(value) == 1 for value in candidate_summaries.values())
+    if not single_candidates:
+        comparison_limitations.append(
+            "Select exactly one candidate on each side; combined runs cannot establish a candidate ranking."
+        )
+    ranking_supported = (
+        bool(baseline_cases) and same_case_set and comparable_evidence and version_compatible and single_candidates
+    )
+    if not same_case_set:
+        comparison_limitations.append(
+            "New and resolved failures are reported only for cases successfully scored on both sides; missing or failed executions are not resolved quality failures."
+        )
     regressed = bool(regressions) or current.get("verdict") in {"Not Ready", "Insufficient Evidence"}
+    comparison_status = (
+        "inconclusive"
+        if not ranking_supported
+        else "regression_detected"
+        if regressed
+        else "no_material_regression_detected"
+    )
+    decision_summary = (
+        "Comparison is inconclusive. Inspect the observed differences, then rerun both revisions with matching cases and scoring versions."
+        if not ranking_supported
+        else "The candidate has a regression or blocking gate. Inspect new failures and failed gates before release."
+        if regressed
+        else "No material regression was detected on this dataset. This does not prove the candidate is safe or ready for launch."
+    )
     return {
+        "comparison_status": comparison_status,
+        "ranking_supported": ranking_supported,
+        "decision_summary": decision_summary,
         "baseline": base,
         "candidate": current,
         "quality_delta": round(candidate_quality - base_quality, 4),
@@ -485,13 +590,21 @@ def _infrastructure_summary(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _cost_latency_summary(df: pd.DataFrame) -> dict[str, float]:
-    costs = pd.to_numeric(df.get("estimated_cost", pd.Series(dtype=float)), errors="coerce").dropna()
-    latencies = pd.to_numeric(df.get("latency_ms", pd.Series(dtype=float)), errors="coerce").dropna()
+def _measurements(df: pd.DataFrame, column: str) -> pd.Series:
+    values = pd.to_numeric(df.get(column, pd.Series(float("nan"), index=df.index)), errors="coerce")
+    return values.where(values.apply(lambda value: math.isfinite(value) and value >= 0))
+
+
+def _cost_latency_summary(df: pd.DataFrame) -> dict[str, Any]:
+    costs = _measurements(df, "estimated_cost")
+    latencies = _measurements(df, "latency_ms")
     return {
-        "known_cost_usd": round(float(costs.sum()), 8),
-        "average_latency_ms": round(float(latencies.mean()), 3) if not latencies.empty else 0.0,
-        "p95_latency_ms": round(_percentile(latencies, 0.95), 3),
+        "known_cost_usd": round(float(costs.sum()), 8) if costs.notna().any() else None,
+        "average_latency_ms": round(float(latencies.mean()), 3) if latencies.notna().any() else None,
+        "p95_latency_ms": round(_percentile(latencies, 0.95), 3) if latencies.notna().any() else None,
+        "measurement_scope": "Known observations only; missing values are not zero. Costs include unsuccessful target calls when reported.",
+        "cost_measurement_count": int(costs.notna().sum()),
+        "latency_measurement_count": int(latencies.notna().sum()),
     }
 
 
@@ -505,6 +618,8 @@ def _version_summary(df: pd.DataFrame) -> dict[str, list[str]]:
         "evaluator_version",
         "threshold_version",
         "calibration_version",
+        "evaluation_configuration_version",
+        "retrieval_configuration_version",
     ]
     return {
         column: sorted(set(df[column].dropna().astype(str)))
@@ -554,7 +669,15 @@ def _gate(name: str, passed: bool, explanation: str) -> dict[str, Any]:
     return {"name": name, "passed": bool(passed), "explanation": explanation}
 
 
-def _threshold_gate(name: str, actual: float, threshold: float, *, minimum: bool) -> dict[str, Any]:
+def _threshold_gate(name: str, actual: float | None, threshold: float, *, minimum: bool) -> dict[str, Any]:
+    if actual is None or not math.isfinite(actual):
+        return {
+            "name": name,
+            "passed": False,
+            "actual": None,
+            "threshold": threshold,
+            "explanation": "Complete valid measurements are unavailable; this threshold cannot be verified.",
+        }
     passed = actual >= threshold if minimum else actual <= threshold
     operator = ">=" if minimum else "<="
     return {
@@ -568,8 +691,14 @@ def _threshold_gate(name: str, actual: float, threshold: float, *, minimum: bool
 
 def _sample_warnings(df: pd.DataFrame, counts: dict[str, int]) -> list[str]:
     warnings: list[str] = []
-    if counts["unique_test_cases"] < 30:
-        warnings.append("Dataset is too small for a stable launch decision; confidence interval is unavailable.")
+    if len(_case_set(df)) < 30:
+        warnings.append(
+            "Fewer than 30 distinct cases were quality-scored; any interval is descriptive and does not establish launch evidence."
+        )
+    if len(df) > len(_case_set(df)):
+        warnings.append(
+            "Repeated executions are averaged within each case before confidence resampling; repetitions do not increase the independent case count."
+        )
     if "category" in df and not df.empty and int(df["category"].value_counts().min()) < 5:
         warnings.append("One or more categories have fewer than five cases.")
     return warnings

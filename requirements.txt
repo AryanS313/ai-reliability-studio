@@ -1,14 +1,15 @@
-streamlit==1.39.0
+-c requirements-lock.txt
+streamlit==1.64.0
 pandas==2.2.3
 plotly==5.24.1
 numpy==1.26.4
 scikit-learn==1.5.2
-python-dotenv==1.0.1
+python-dotenv==1.2.3
 openai==1.54.4
 anthropic==0.39.0
 google-genai==1.0.0
 pydantic==2.13.4
-pypdf==5.1.0
+pypdf==6.18.1
 python-docx==1.1.2
 openpyxl==3.1.5
 xlrd==2.0.1

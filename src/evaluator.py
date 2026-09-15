@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src import config, database
-from src.calibration import EvaluatorThresholdConfiguration, uncalibrated_status
+from src.calibration import EvaluatorThresholdConfiguration, calibration_for_run, uncalibrated_status
 from src.datasets import (
     LEGACY_REQUIRED_FIELDS,
     DatasetValidationException,
@@ -22,6 +22,7 @@ from src.datasets import (
 from src.domain import ExecutionStatus, TargetType
 from src.execution import CancellationToken, ExecutionEngine, ExecutionPolicy
 from src.judges import LLMJudge
+from src.provenance import PROVENANCE_FIELDS
 from src.retrieval import retrieval_metrics, retrieve_chunks
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION, score_result
 from src.suggestions import suggestion_for_failure
@@ -107,9 +108,9 @@ def run_evaluation(
 ) -> pd.DataFrame:
     dataset = normalize_eval_dataset(eval_df)
     threshold_configuration = threshold_configuration or EvaluatorThresholdConfiguration()
-    calibration = calibration_result or uncalibrated_status(threshold_configuration)
-    if calibration.get("threshold_version") != threshold_configuration.version:
-        raise ValueError("Calibration result threshold version does not match this run's threshold configuration.")
+    calibration = calibration_for_run(
+        calibration_result or uncalibrated_status(threshold_configuration), threshold_configuration
+    )
     models = model_name if isinstance(model_name, list) else [model_name]
     vector_store = SimpleVectorStore()
     vector_store.build(chunks)
@@ -169,13 +170,28 @@ def run_evaluation(
                     "target_type": target_type,
                 }
             )
-            candidate_name = f"{prompt_name} · {target_name} · {selected_model}"
+            controls_model = target_type in {TargetType.FOUNDATION_MODEL.value, TargetType.SYNTHETIC.value}
+            configured_provider = (
+                config.provider_for_model(selected_model)
+                if target_type == TargetType.FOUNDATION_MODEL.value
+                else "synthetic"
+                if target_type == TargetType.SYNTHETIC.value
+                else None
+            )
+            candidate_name = f"{prompt_name} · {target_name}" + (f" · {selected_model}" if controls_model else "")
             retrieval_configuration = {
                 "top_k": top_k,
                 "similarity_threshold": similarity_threshold,
                 "retriever": "hybrid-v1",
                 "embedding_provider": vector_store.embedder.name,
                 "semantic_embeddings": vector_store.embedder.semantic,
+            }
+            evaluation_configuration = {
+                "weights": metric_weights or {},
+                "latency_threshold_ms": latency_threshold_ms,
+                "cost_threshold_usd": cost_threshold_usd,
+                "threshold_version": threshold_configuration.version,
+                "judge_version": judge_evaluator.configuration.version if judge_evaluator is not None else None,
             }
             manifest = build_run_manifest(
                 prompt={"name": prompt_name, "version_id": prompt_version_id, "content_hash": prompt_hash},
@@ -219,13 +235,27 @@ def run_evaluation(
                     },
                 ],
                 model={
-                    "provider": config.provider_for_model(selected_model)
+                    "provenance": "configured_runner_settings",
+                    "provider": configured_provider,
+                    "identifier": selected_model if controls_model else None,
+                    "configured_runner_model": selected_model,
+                    "runner_controls_model": controls_model,
+                    "observed_identity_location": "per_execution_result",
+                    "sampling_setting_semantics": "requested",
+                    "effective_sampling_location": "per_execution_result.metadata.sampling"
+                    if target_type == TargetType.FOUNDATION_MODEL.value and configured_provider == "anthropic"
+                    else None,
+                    "temperature": target_configuration.get("temperature", 0.0)
                     if target_type == TargetType.FOUNDATION_MODEL.value
-                    else target_type,
-                    "identifier": selected_model,
-                    "temperature": 0.0,
-                    "seed": 17 if target_type == TargetType.SYNTHETIC.value else None,
-                    "token_limit": 2048,
+                    else None,
+                    "seed": target_configuration.get("seed", 17)
+                    if target_type == TargetType.SYNTHETIC.value
+                    else target_configuration.get("seed")
+                    if target_type == TargetType.FOUNDATION_MODEL.value
+                    else None,
+                    "token_limit": target_configuration.get("max_tokens", 2048)
+                    if target_type == TargetType.FOUNDATION_MODEL.value
+                    else None,
                 },
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,
@@ -277,7 +307,7 @@ def run_evaluation(
                     "dataset_version": dataset_hash,
                     "document_versions": document_versions,
                     "retrieval_configuration": retrieval_configuration,
-                    "evaluation_configuration": {"weights": metric_weights or {}},
+                    "evaluation_configuration": evaluation_configuration,
                 }
                 requests.append(request)
                 rows_by_case[case_id] = {"case": case, "retrieved": retrieved}
@@ -312,6 +342,28 @@ def run_evaluation(
                 )
                 result.update(
                     {
+                        "run_id": run_id,
+                        "manifest_hash": manifest["manifest_hash"],
+                        "run_timestamp": manifest["created_at"],
+                        "environment": manifest["environment"],
+                        "dataset_version": dataset_hash,
+                        "knowledge_base_version": version_hash(document_versions),
+                        "retrieval_configuration_version": version_hash(retrieval_configuration),
+                        "evaluation_configuration_version": version_hash(evaluation_configuration),
+                        "attempt_count": record.attempt_count,
+                        "cache_hit": record.cache_hit,
+                        "execution_key": record.execution_key,
+                        "provider": response.provider if response else None,
+                        "model_name": response.model if response else None,
+                        "configured_runner_model": selected_model,
+                        "response_reported_model": response.model if response else None,
+                        "model_identity_provenance": "target_response"
+                        if response and response.model
+                        else "not_reported",
+                        "retrieval_metrics_scope": "evaluator_local_reference_retrieval",
+                        "client_retrieval_status": "not_measured"
+                        if target_type == TargetType.EXTERNAL_API.value
+                        else "runner_retrieval",
                         "evaluator_version": EVALUATOR_VERSION,
                         "label_semantics_version": LABEL_SEMANTICS_VERSION,
                         "threshold_version": threshold_configuration.version,
@@ -422,6 +474,55 @@ def run_evaluation(
                         }
                     )
                     result["suggested_fix"] = suggestion_for_failure(result["failure_type"])
+                result["metadata"] = {
+                    **dict(result.get("metadata") or {}),
+                    "provenance": {key: result.get(key) for key in PROVENANCE_FIELDS},
+                    "calibration_limitations": calibration.get("limitations", []),
+                    "execution_elapsed_ms": round((record.completed_at - record.started_at) * 1000, 3)
+                    if record.completed_at is not None and record.started_at is not None
+                    else None,
+                    "model_identity": {
+                        "provenance": result["model_identity_provenance"],
+                        "reported_provider": result["provider"],
+                        "reported_model": result["response_reported_model"],
+                        "configured_runner_provider": configured_provider,
+                        "configured_runner_model": selected_model,
+                    },
+                }
+                if response and (
+                    response.metadata.get("credential_redacted") is True
+                    or response.error_code in {"credential_in_target_response", "credential_in_provider_response"}
+                ):
+                    result["failure_labels"] = sorted(
+                        set(result.get("failure_labels", [])) | {"privacy_violation", "unsafe_response"}
+                    )
+                    result["failure_reason_codes"] = list(result.get("failure_reason_codes", [])) + [
+                        "runtime_credential_disclosure"
+                    ]
+                    result["failure_evidence"] = {
+                        **dict(result.get("failure_evidence", {})),
+                        "privacy_violation": [
+                            {
+                                "reason_code": "runtime_credential_disclosure",
+                                "value": "[REDACTED]",
+                                "explanation": "The target returned a runtime credential. The response was withheld.",
+                            }
+                        ],
+                    }
+                    if record.status == ExecutionStatus.PASSED:
+                        result["failure_type"] = "Privacy Violation"
+                        result["overall_score"] = min(float(result.get("overall_score", 0)), 0.25)
+                    result["suggested_fix"] = (
+                        "Stop this release, investigate credential handling at the target, and rotate the exposed credential before reconnecting."
+                    )
+                if record.attempt_count > 1:
+                    # The adapter exposes only the final response. Earlier attempts
+                    # may be billable, so a final-attempt cost is not a run total.
+                    result["metadata"]["last_attempt_cost_usd"] = result.get("estimated_cost")
+                    result["metadata"]["cost_limitations"] = (
+                        "Total cost is unknown because prior retry attempts may be billable; the final-attempt observation is retained separately."
+                    )
+                    result["estimated_cost"] = None
                 database.save_eval_result(run_id, result, context=context)
                 all_results.append(result)
     return pd.DataFrame(all_results)
@@ -518,8 +619,13 @@ def _base_result(
     return {
         "case_id": str(case["case_id"]),
         "question": str(case["question"]),
-        "expected_answer": str(case.get("expected_answer") or ""),
-        "expected_source": str(case.get("expected_source") or ""),
+        "expected_answer": str(case.get("expected_answer") or next(iter(case.get("expected_answers") or []), "")),
+        "expected_source": str(case.get("expected_source") or next(iter(case.get("expected_sources") or []), "")),
+        "expected_behavior": str(case.get("expected_behavior") or ""),
+        "expected_answers": list(case.get("expected_answers") or []),
+        "expected_sources": list(case.get("expected_sources") or []),
+        "expected_escalation_destination": case.get("escalation_destination"),
+        "expected_escalation_urgency": case.get("escalation_urgency"),
         "retrieved_chunks": retrieved,
         "retrieved_sources": list(dict.fromkeys(str(item.get("source_name", "")) for item in retrieved)),
         "category": str(case["category"]),

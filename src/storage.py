@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,6 +15,10 @@ from src.domain import Role, WorkspaceContext
 from src.migrations import migrate_sqlite
 from src.security import AuthorizationError, redact_pii, redact_secrets, require_role, sanitize_filename
 from src.versioning import text_hash, version_hash
+
+
+def _json_value(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def utcnow() -> str:
@@ -133,13 +138,19 @@ class SQLiteRepository(Repository):
         return WorkspaceContext(user_id=user_id, workspace_id=workspace_id, role=Role.OWNER)
 
     def add_member(self, context: WorkspaceContext, email: str, role: Role) -> int:
-        self.authorize(context, Role.ADMIN)
-        if role == Role.OWNER and context.role != Role.OWNER:
+        actual_role = self.authorize(context, Role.ADMIN)
+        if role == Role.OWNER and actual_role != Role.OWNER:
             raise AuthorizationError("Only owners may add another owner.")
         with self.connection() as conn:
             row = conn.execute("SELECT id FROM users WHERE email = ?", (email.lower(),)).fetchone()
             if row:
                 user_id = int(row["id"])
+                existing = conn.execute(
+                    "SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ?",
+                    (user_id, context.workspace_id),
+                ).fetchone()
+                if existing and existing["role"] == Role.OWNER.value and actual_role != Role.OWNER:
+                    raise AuthorizationError("Only owners may change owner memberships.")
             else:
                 user_id = int(
                     conn.execute(
@@ -158,7 +169,8 @@ class SQLiteRepository(Repository):
         self.migrate()
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ? AND revoked_at IS NULL",
+                """SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id
+                WHERE m.user_id = ? AND m.workspace_id = ? AND m.revoked_at IS NULL AND u.disabled_at IS NULL""",
                 (context.user_id, context.workspace_id),
             ).fetchone()
         if row is None:
@@ -427,6 +439,28 @@ class SQLiteRepository(Repository):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def load_project_configuration(self, context: WorkspaceContext, project_id: int) -> dict[str, Any]:
+        """Restore the latest saved dataset and external target for this project."""
+        self.authorize(context)
+        self._require_project(context, project_id, allow_none=False)
+        with self.connection() as conn:
+            dataset = conn.execute(
+                """SELECT dv.rows_json FROM dataset_versions dv JOIN datasets d ON d.id = dv.dataset_id
+                WHERE dv.workspace_id = ? AND d.workspace_id = ? AND d.project_id = ?
+                ORDER BY dv.id DESC LIMIT 1""",
+                (context.workspace_id, context.workspace_id, project_id),
+            ).fetchone()
+            target = conn.execute(
+                """SELECT tv.configuration_json FROM target_versions tv JOIN targets t ON t.id = tv.target_id
+                WHERE tv.workspace_id = ? AND t.workspace_id = ? AND t.project_id = ? AND t.target_type = 'external_api'
+                ORDER BY tv.id DESC LIMIT 1""",
+                (context.workspace_id, context.workspace_id, project_id),
+            ).fetchone()
+        return {
+            "dataset_records": json.loads(dataset["rows_json"]) if dataset else [],
+            "external_target_config": json.loads(target["configuration_json"]) if target else {},
+        }
+
     def create_dataset_version(
         self,
         context: WorkspaceContext,
@@ -635,6 +669,21 @@ class SQLiteRepository(Repository):
             payload["metadata_json"] = json.dumps(result.get("metadata", {}), default=str)
         columns = list(payload)
         with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing_result = conn.execute(
+                """SELECT id FROM eval_results WHERE workspace_id = ? AND run_id = ?
+                AND COALESCE(NULLIF(case_id, ''), NULLIF(question, ''), 'unknown') = ?
+                AND prompt_version IS ? AND target_version IS ? LIMIT 1""",
+                (
+                    context.workspace_id,
+                    run_id,
+                    str(result.get("case_id") or result.get("question") or "unknown"),
+                    result.get("prompt_version"),
+                    result.get("target_version"),
+                ),
+            ).fetchone()
+            if existing_result:
+                return int(existing_result["id"])
             execution_key = version_hash(
                 {
                     "run_id": run_id,
@@ -667,7 +716,7 @@ class SQLiteRepository(Repository):
                 (workspace_id, run_id, case_id, execution_key, prompt_version_id, target_version_id,
                  status, attempt_count, completed_at, latency_ms, http_status, provider, model,
                  input_tokens, output_tokens, cost, error_code, safe_error, response_json, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     context.workspace_id,
@@ -677,10 +726,11 @@ class SQLiteRepository(Repository):
                     int(prompt_version["id"]) if prompt_version else None,
                     int(target_version["id"]) if target_version else None,
                     str(result.get("execution_status") or "passed"),
+                    int(result.get("attempt_count", 1)),
                     utcnow(),
                     result.get("latency_ms"),
                     result.get("http_status"),
-                    str(result.get("target_type") or ""),
+                    str(result.get("provider") or result.get("target_type") or ""),
                     result.get("model_name"),
                     result.get("input_tokens"),
                     result.get("output_tokens"),
@@ -1138,6 +1188,27 @@ class SQLiteRepository(Repository):
         )
 
 
+class EphemeralSQLiteRepository(SQLiteRepository):
+    """One in-memory database per anonymous browser session; no disk artifacts."""
+
+    def __init__(self) -> None:
+        self.path = Path(":memory:")
+        self._lock = threading.RLock()
+        self._connection = sqlite3.connect(":memory:", check_same_thread=False)
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute("PRAGMA foreign_keys = ON")
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            try:
+                yield self._connection
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+
 class PostgresRepository(Repository):
     """Production PostgreSQL connection and migration boundary.
 
@@ -1186,7 +1257,8 @@ class PostgresRepository(Repository):
         with self.connection() as conn:
             self._scope(conn, context)
             row = conn.execute(
-                "SELECT role FROM memberships WHERE user_id = %s AND workspace_id = %s AND revoked_at IS NULL",
+                """SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id
+                WHERE m.user_id = %s AND m.workspace_id = %s AND m.revoked_at IS NULL AND u.disabled_at IS NULL""",
                 (context.user_id, context.workspace_id),
             ).fetchone()
         if row is None:
@@ -1199,9 +1271,18 @@ class PostgresRepository(Repository):
         return self._bootstrap_context(owner_email, name, always_create_workspace=True)
 
     def add_member(self, context: WorkspaceContext, email: str, role: Role) -> int:
-        self.authorize(context, Role.ADMIN)
+        actual_role = self.authorize(context, Role.ADMIN)
+        if role == Role.OWNER and actual_role != Role.OWNER:
+            raise AuthorizationError("Only owners may add another owner.")
         with self.connection() as conn:
             self._scope(conn, context)
+            existing = conn.execute(
+                """SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id
+                WHERE u.email = %s AND m.workspace_id = %s""",
+                (email.lower(), context.workspace_id),
+            ).fetchone()
+            if existing and existing["role"] == Role.OWNER.value and actual_role != Role.OWNER:
+                raise AuthorizationError("Only owners may change owner memberships.")
             user = conn.execute(
                 """
                 INSERT INTO users (email, display_name, auth_subject)
@@ -1475,6 +1556,29 @@ class PostgresRepository(Repository):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def load_project_configuration(self, context: WorkspaceContext, project_id: int) -> dict[str, Any]:
+        """Restore the latest saved dataset and external target for this project."""
+        self.authorize(context)
+        self._require_project(context, project_id, allow_none=False)
+        with self.connection() as conn:
+            self._scope(conn, context)
+            dataset = conn.execute(
+                """SELECT dv.rows_json FROM dataset_versions dv JOIN datasets d ON d.id = dv.dataset_id
+                WHERE dv.workspace_id = %s AND d.workspace_id = %s AND d.project_id = %s
+                ORDER BY dv.id DESC LIMIT 1""",
+                (context.workspace_id, context.workspace_id, project_id),
+            ).fetchone()
+            target = conn.execute(
+                """SELECT tv.configuration_json FROM target_versions tv JOIN targets t ON t.id = tv.target_id
+                WHERE tv.workspace_id = %s AND t.workspace_id = %s AND t.project_id = %s AND t.target_type = 'external_api'
+                ORDER BY tv.id DESC LIMIT 1""",
+                (context.workspace_id, context.workspace_id, project_id),
+            ).fetchone()
+        return {
+            "dataset_records": _json_value(dataset["rows_json"]) if dataset else [],
+            "external_target_config": _json_value(target["configuration_json"]) if target else {},
+        }
+
     def create_dataset_version(
         self,
         context: WorkspaceContext,
@@ -1671,13 +1775,32 @@ class PostgresRepository(Repository):
         )
         with self.connection() as conn:
             self._scope(conn, context)
+            conn.execute(
+                "SELECT id FROM eval_runs WHERE workspace_id = %s AND id = %s FOR UPDATE",
+                (context.workspace_id, run_id),
+            )
+            existing_result = conn.execute(
+                """SELECT id FROM eval_results WHERE workspace_id = %s AND run_id = %s
+                AND COALESCE(NULLIF(result_json->>'case_id', ''), NULLIF(result_json->>'question', ''), 'unknown') = %s
+                AND result_json->>'prompt_version' IS NOT DISTINCT FROM %s
+                AND result_json->>'target_version' IS NOT DISTINCT FROM %s LIMIT 1""",
+                (
+                    context.workspace_id,
+                    run_id,
+                    str(result.get("case_id") or result.get("question") or "unknown"),
+                    result.get("prompt_version"),
+                    result.get("target_version"),
+                ),
+            ).fetchone()
+            if existing_result:
+                return int(existing_result["id"])
             execution = conn.execute(
                 """
                 INSERT INTO executions
                 (workspace_id, run_id, case_id, execution_key, status, attempt_count, completed_at,
                  latency_ms, http_status, provider, model, input_tokens, output_tokens, cost,
                  error_code, safe_error, response_json, metadata_json)
-                VALUES (%s, %s, %s, %s, %s, 1, now(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (workspace_id, execution_key) DO UPDATE SET status = EXCLUDED.status
                 RETURNING id
                 """,
@@ -1687,9 +1810,10 @@ class PostgresRepository(Repository):
                     str(result.get("case_id") or result.get("question") or "unknown"),
                     execution_key,
                     str(result.get("execution_status") or "passed"),
+                    int(result.get("attempt_count", 1)),
                     result.get("latency_ms"),
                     result.get("http_status"),
-                    result.get("target_type"),
+                    result.get("provider") or result.get("target_type"),
                     result.get("model_name"),
                     result.get("input_tokens"),
                     result.get("output_tokens"),

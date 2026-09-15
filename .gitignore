@@ -4,9 +4,14 @@ __pycache__/
 .env.*
 !.env.example
 .streamlit/
+!.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 .streamlit/secrets.toml
 venv/
 .venv/
+.venv-py39-backup/
+.local-verification/
 *.pyc
 *.pyo
 *.pyd

@@ -25,6 +25,7 @@ _load_local_environment()
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "ai_reliability_studio.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
+APP_ACCESS_MODE = os.getenv("APP_ACCESS_MODE", "public-demo").lower()
 AUTH_MODE = os.getenv("AUTH_MODE", "single-user").lower()
 AUTH_SESSION_MAX_AGE_SECONDS = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "3600"))
 AUTH_REQUIRE_ISSUED_AT = os.getenv(

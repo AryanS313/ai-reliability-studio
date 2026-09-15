@@ -8,6 +8,8 @@ the explicit local development workspace.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import MutableMapping
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -16,39 +18,100 @@ import pandas as pd
 from src import config
 from src.domain import WorkspaceContext
 from src.migrations import migrate_sqlite
-from src.storage import repository_from_url
+from src.storage import EphemeralSQLiteRepository, Repository, repository_from_url
 from src.versioning import version_hash
 
 _repository = None
-_active_context: WorkspaceContext | None = None
+_active_context: ContextVar[WorkspaceContext | None] = ContextVar("workspace_context", default=None)
+_session_repository: ContextVar[Repository | None] = ContextVar("session_repository", default=None)
 
 
 def get_repository():
     global _repository
+    session_repository = _session_repository.get()
+    if session_repository is not None:
+        return session_repository
     if _repository is None:
         _repository = repository_from_url()
     return _repository
 
 
 def set_repository(repository) -> None:
-    global _active_context, _repository
+    global _repository
     _repository = repository
-    _active_context = None
+    _active_context.set(None)
+    _session_repository.set(None)
+
+
+def initialize_session(state: MutableMapping[str, Any], headers: dict[str, Any] | None = None) -> WorkspaceContext:
+    """Bind every UI rerun to its own context before any repository operation.
+
+    Anonymous demos never open the configured persistent database. The in-memory
+    repository lives only as long as its Streamlit session state. Local mode is an
+    explicit trusted, loopback-only deployment; shared deployments require proxy
+    identity verification on every rerun.
+    """
+    from src.auth import AuthenticationError
+
+    _active_context.set(None)
+    _session_repository.set(None)
+    if config.APP_ACCESS_MODE == "public-demo":
+        repository = state.get("_demo_repository")
+        if not isinstance(repository, EphemeralSQLiteRepository):
+            repository = EphemeralSQLiteRepository()
+            state["_demo_repository"] = repository
+        _session_repository.set(repository)
+        context = repository.local_context()
+        _active_context.set(context)
+        _check_session_identity(state, context)
+        return context
+    if config.APP_ACCESS_MODE == "authenticated":
+        if config.AUTH_MODE not in {"proxy", "oidc-proxy"}:
+            raise AuthenticationError("Authenticated access requires trusted proxy authentication.")
+    elif config.APP_ACCESS_MODE == "local":
+        if config.APP_ENV == "production":
+            raise AuthenticationError("Local access mode is disabled in production.")
+    else:
+        raise AuthenticationError("APP_ACCESS_MODE must be public-demo, local, or authenticated.")
+    init_db()
+    context = current_context(headers or {})
+    _check_session_identity(state, context)
+    return context
+
+
+def _check_session_identity(state: MutableMapping[str, Any], context: WorkspaceContext) -> None:
+    from src.auth import AuthenticationError
+
+    identity = (config.APP_ACCESS_MODE, config.AUTH_MODE, context.user_id, context.workspace_id)
+    previous = state.get("_session_identity")
+    if previous is not None and previous != identity:
+        # Widget/session memory can contain document text, results and live keys;
+        # a correct repository binding alone does not isolate that UI memory.
+        state.clear()
+        _active_context.set(None)
+        _session_repository.set(None)
+        raise AuthenticationError("The workspace identity changed. Reload to begin a clean session.")
+    state["_session_identity"] = identity
 
 
 def current_context(headers: dict[str, Any] | None = None) -> WorkspaceContext:
-    global _active_context
-    if headers is None and _active_context is not None:
-        return _active_context
-    repository = get_repository()
-    if config.AUTH_MODE == "single-user":
-        context = repository.local_context()
-        _active_context = context
-        return context
     from src.auth import authenticate_request, workspace_context
 
+    if (
+        config.AUTH_MODE == "single-user"
+        and config.APP_ENV == "production"
+        and not isinstance(_session_repository.get(), EphemeralSQLiteRepository)
+    ):
+        _active_context.set(None)
+        authenticate_request(headers)
+    active_context = _active_context.get()
+    if headers is None and active_context is not None:
+        return active_context
+    _active_context.set(None)
+    repository = get_repository()
+
     context = workspace_context(repository, authenticate_request(headers), None)
-    _active_context = context
+    _active_context.set(context)
     return context
 
 
