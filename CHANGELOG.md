@@ -13,6 +13,7 @@ Published as Sites version 8; package remains 1.0.0. GitHub publication/CI state
 - Advance evaluation to `deterministic-v8` and reports to schema 2.1; preserve critical failures, calibration/compatibility limits and unknown measurements.
 - Add privacy-safe local product events, a full metric dictionary, design-partner discovery plan and living product-evolution record.
 - Patch compatible browser dependencies and document retained compiled-package advisories with actual Wasm reachability evidence.
+- Pin patched setuptools for Python 3.11 installations after remote auditing exposed inherited tooling; explicitly select the private workspace for CLI smoke checks without weakening public-mode or synthetic-verdict safeguards.
 
 ## September 7–8, 2026 — public workflow repairs
 

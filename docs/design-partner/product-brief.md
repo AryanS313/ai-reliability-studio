@@ -1,5 +1,7 @@
 # Product brief: a release check for knowledge support assistants
 
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
 Research date: 16 September 2026. Status: **evidence-informed ICP hypothesis; customer demand is not yet validated**. No interviews, design partners, retention, willingness to pay, or customer outcomes are claimed by this document.
 
 ## Decision
@@ -73,17 +75,23 @@ Versioning, HTTP support, dashboards, “RAG evals,” and human review are **no
 1. Understand the outcome and try an isolated synthetic sample.
 2. Create/select a project and acknowledge data handling before adding custom material.
 3. Add approved documents and representative expected-behavior cases; resolve validation issues.
-4. Connect the staging assistant using a guided target form; check its response mapping and secret references.
-5. Confirm exactly what will be sent and how many calls may run; execute.
+4. In private native mode, connect the staging assistant through the guided target form and check response mapping/credentials. In the browser, import saved assistant answers for source review, or explicitly connect a supported model provider; arbitrary assistant HTTP is unavailable.
+5. For real generation, confirm exactly what will be sent and how many calls may run, then execute. For imported answers, preserve declared capture identity and review the supplied evidence without claiming a new target call.
 6. Review execution status, major answer failures, source evidence, calibration, and missing coverage.
 7. Compare a revision with its baseline and export a redacted evidence packet for the release owner.
 
 ## Non-goals and design-partner release boundary
 
-In scope: an isolated synthetic public demonstration and a local/private pilot for one team, read-only support answers, versioned test material, bounded HTTP/model execution, inspectable evaluation, manual domain review, and repeatable comparisons. The pilot owner supplies lawful-to-use test data, a staging endpoint, and an independent reviewer. A local synthetic/reference server is a transport test, not a real customer integration or quality proof.
+In scope: the published tab-local browser beta for approved non-sensitive saved-answer review and explicit-key supported model calls; an isolated sample-only native public demonstration; and a trusted local/private pilot for read-only support answers, versioned test material, bounded HTTP/model execution, inspectable evaluation, manual domain review and repeatable comparisons. The pilot owner supplies lawful-to-use test data, a staging endpoint, and an independent reviewer. A local synthetic/reference server is a transport test, not a real customer integration or quality proof.
 
 Out of scope: autonomous transaction/action approval, medical/credit/legal decision certification, universal agent benchmarks, replacing observability stacks, automatic fixes sent to production, continuous production monitoring promises, training models, or a generic analytics dashboard.
 
 Enterprise requirements may remain explicit: managed identity and provisioning, validated PostgreSQL/RLS, durable jobs and storage, retention/backups, malware scanning/OCR, operational monitoring, load/recovery validation, and formal assurance. Do not accept sensitive partner data in a deployment whose applicable controls have not been verified. An evidence packet informs a human release decision; it does not certify production safety.
 
-**Current evidence limit:** local engineering verification can establish workflow behavior and bounded controls. Independent first-time comprehension, adoption, real endpoint compatibility, evaluator adequacy in a customer's domain, recurring value, and willingness to continue require design-partner participation. See [discovery plan](discovery-plan.md) and [success metrics](success-metrics.md).
+**Current evidence limit:** native, actual Wasm and observed published-browser checks establish their exercised behavior and bounded controls. Independent first-time comprehension, adoption, real endpoint compatibility, evaluator adequacy in a customer's domain, recurring value, and willingness to continue require design-partner participation. See [discovery plan](discovery-plan.md) and [success metrics](success-metrics.md).
+
+## Published workflow versus the recruitment hypothesis
+
+The primary 32-case synthetic review and the separate three-answer authored review are demonstrations, not customer quality evidence. The staging-endpoint qualification above remains the initial live-evaluation research cohort; saved-answer pilots are an additional adoption hypothesis to assess explicitly, with capture provenance and domain review recorded. Do not imply that importing answers measures the assistant's internal retrieval or independently authenticates its identity. Keep saved-review activation separate from the live-call metric denominators until the measurement contract is extended.
+
+Browser users must download their complete workspace before closing/reloading the tab or returning after 24 hours of inactivity. That file contains original inputs and review notes and is different from a redacted report. Managed persistent team hosting, live-provider account acceptance and independent product comprehension remain separate validation work. The [living product history](../PRODUCT_EVOLUTION.md) records delivery and customer-evidence maturity without changing this ICP hypothesis into a validated market finding.

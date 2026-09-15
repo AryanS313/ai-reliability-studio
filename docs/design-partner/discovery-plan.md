@@ -1,10 +1,12 @@
 # Design-partner discovery and validation
 
-Status: planned research, not completed customer evidence. No outreach has been sent. Recruiting, external communications, external data access, and publishing require the owner's authorization.
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
+Status: planned research, not completed customer evidence. No outreach has been sent. Product publication was authorized and completed; that does not authorize unsolicited recruitment messages or publication of participant material. Obtain the appropriate outreach authorization and participant consent for the research activities below.
 
 ## Recruit against behavior
 
-Recruit 6–8 teams matching the [primary ICP](product-brief.md), including teams using spreadsheets/scripts and teams already using an evaluation tool. Seek a builder and domain/release owner together. Ask for a recent change and an upcoming release, not agreement that “AI reliability matters.” Exclude teams that cannot provide approved test material or a staging endpoint, need regulated certification, or have no upcoming release.
+Recruit 6–8 teams matching the [primary ICP](product-brief.md), including teams using spreadsheets/scripts and teams already using an evaluation tool. Seek a builder and domain/release owner together. Ask for a recent change and an upcoming release, not agreement that “AI reliability matters.” For the initial live-evaluation cohort, exclude teams that cannot provide approved test material or a staging endpoint; for a separately labeled saved-answer pilot, require approved captures and a domain reviewer. Exclude teams that need regulated certification, or have no upcoming release.
 
 Use participant consent and a private research record. Keep names, emails, company details, recordings, and raw examples out of product analytics and this repository. Publish only permissioned, de-identified aggregate outcomes with sample size and dates.
 
@@ -24,7 +26,9 @@ Record observed artifacts separately from self-reported estimates and opinions. 
 
 Give a neutral task: “Find out what this tool can help you decide, try the example, and explain the result.” Do not point at controls. Record elapsed time, intentional actions, completion, wrong turns, errors/recovery, and interventions. Ask the participant to explain the failure, severity, next change, evidence type, and missing evidence. Test keyboard use and a narrow viewport as separate tasks; source/AppTest verification does not establish human accessibility.
 
-Then ask the team's engineer to connect an approved staging endpoint from the instructions, load a small reviewed dataset, run, and have the domain owner explain a finding. Record whether assistance or a custom adapter was required. Supply no production credentials and perform no calls without explicit confirmation in the product.
+For the live-evaluation cohort, ask the team's engineer to use the private native app to connect an approved staging endpoint from the instructions, load a small reviewed dataset, run, and have the domain owner explain a finding. Record whether assistance or a custom adapter was required. Supply no production credentials and perform no calls without explicit confirmation in the product.
+
+For a saved-answer browser pilot, ask the team to import its approved questions, reference packet and actual captured answers, record a source-bound review, try a replacement and download/restore the workspace. Record whether capture identity is declared or independently checked. This path makes no assistant request; it must not be counted as successful endpoint integration or proof of client retrieval. Include the closing/reload/24-hour inactivity boundary in the custody teach-back. Both pilot paths require an independently understood finding or evidence gap before claiming activation.
 
 ## Two-release pilot
 

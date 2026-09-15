@@ -4,13 +4,19 @@
 
 A design-partner beta for small product teams shipping assistants grounded in policies and knowledge articles. Run approved test cases against a staging assistant, inspect consequential failures and source evidence, then compare the next revision with its baseline.
 
-[Open the browser app](https://ai-reliability-studio.a3103.chatgpt.site/) · [Product brief](docs/design-partner/product-brief.md) · [Product evolution and current state](docs/PRODUCT_EVOLUTION.md) · [Setup and deployment](docs/DEPLOYMENT.md)
+[Open the live Streamlit demo](https://ai-reliability-studio.streamlit.app/) · [Product brief](docs/design-partner/product-brief.md) · [Product evolution and current state](docs/PRODUCT_EVOLUTION.md) · [Setup and deployment](docs/DEPLOYMENT.md)
 
-> Release integration combines the guided release workflow with the browser and saved-answer capabilities from main. The browser beta is published; combined checks, live verification and the remaining GitHub handoff are tracked in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
+> This release combines the guided release workflow with the browser and saved-answer capabilities. The browser beta is published; exact source, GitHub delivery and verification results are tracked in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
 
-## Use the browser app
+## Try the public demo
 
-The hosted edition runs the Python application in your browser tab. Start with **Try the sample review** for 32 fictional cases. Under **Start → Review answers you already have**, choose the three-answer example or review answers exported from your own assistant. Custom work requires the data-handling acknowledgment and a saved project. Upload the question set, complete source packet and saved answers; inspect each answer, record a review, then compare replacement answers.
+[Open AI Reliability Studio](https://ai-reliability-studio.streamlit.app/) and choose **Try the sample review**. This is the temporary primary public address while a branded custom domain is selected. It provides isolated, temporary sample-only sessions; custom uploads and real assistant calls require the private local workspace below. Community Cloud can hibernate after inactivity, so this address is not an always-on service commitment.
+
+## Optional browser edition
+
+The [browser edition](https://ai-reliability-studio.a3103.chatgpt.site/) remains available for approved tab-local custom work and saved-answer review. It is an alternative deployment, not the primary public link. A branded domain is planned but has not been purchased or configured.
+
+This optional edition runs the Python application in your browser tab. Start with **Try the sample review** for 32 fictional cases. Under **Start → Review answers you already have**, choose the three-answer example or review answers exported from your own assistant. Custom work requires the data-handling acknowledgment and a saved project. Upload the question set, complete source packet and saved answers; inspect each answer, record a review, then compare replacement answers.
 
 The saved-answer path makes no provider request. A review records its author, method, explanation and the exact answer/question/source versions. Automatic checks remain advisory. Uploaded identity, capture time and unobserved client retrieval, latency or cost are not independently verified. Restore a downloaded workspace to continue compatible reviews; changing an answer invalidates its previous review. Primary screens use forms, upload controls and readable findings; JSON is an optional file format for engineers, not a text-editing prerequisite.
 
@@ -20,7 +26,7 @@ First startup downloads substantial runtime assets. The browser uses Stlite 0.76
 
 ## Start locally
 
-Python **3.11 or 3.12** is required. Python 3.9 is unsupported. The current local verification used **Python 3.12.14**; Python 3.11 dependency resolution was checked with a dry run, but its runtime suite was not executed locally. CI is configured to exercise both versions; completed remote results are recorded separately from local checks.
+Python **3.11 or 3.12** is required. Python 3.9 is unsupported. Local verification used **Python 3.12.14**. GitHub CI passed the complete non-service suite on **Python 3.11 and 3.12**, plus the dedicated PostgreSQL service and container checks. The [release review](docs/design-partner/release-review.md) distinguishes local and remote counts and coverage. Python 3.11 installation explicitly patches inherited setuptools tooling.
 
 ```bash
 cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio

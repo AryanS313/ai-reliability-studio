@@ -1,12 +1,14 @@
 # Design-partner security review
 
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
 ## Baseline recorded before security changes (16 September 2026)
 
-Code inspection confirmed the following. Public deployment configuration is not available from source, so remote exposure must be assessed separately; these are reachable risks in the default application configuration.
+Inspection of the older `d2fb73e` local baseline confirmed the following default-configuration risks. These are historical source findings, not an observed incident or a description of the newer browser deployment already present at inspection.
 
 | Finding | Evidence | Priority |
 |---|---|---|
-| Every anonymous visitor used the same persistent SQLite workspace. | `app.init_state` → `database.current_context` → `repository.local_context`; default `AUTH_MODE=single-user`. | Release blocker |
+| The baseline default would resolve anonymous requests to the same persistent SQLite workspace. | `app.init_state` → `database.current_context` → `repository.local_context`; default `AUTH_MODE=single-user`. | Release blocker |
 | Authenticated workspace context was process-global and reused by calls without request headers. | `database._active_context`, called by database facade functions. | Release blocker |
 | Public sessions could consume shared deployment API keys. | `app.effective_api_key` falls back to Streamlit secrets and environment. | Release blocker |
 | Privacy acknowledgement was initialized but not enforced; custom assets/runs could have no project. | `app.init_state`; repository write paths used `allow_none=True`. | High |
@@ -19,7 +21,7 @@ Working protections found: workspace checks for repository reads/writes/exports,
 
 ## Verification and release boundary
 
-Implementation and automated verification results will be appended after focused tests. This document does not claim the live deployment has changed. No push, deployment, or external infrastructure changes are authorized.
+The focused records below describe the security implementation phase. The integrated beta is now published with observed live sample isolation/reset. Current build, test, branch and remote-check status is maintained in the release review and product history rather than duplicated here. No managed identity/infrastructure readiness follows from publication.
 
 ## Implemented controls and verification
 
@@ -37,7 +39,7 @@ Implementation and automated verification results will be appended after focused
 | Export summary bypass | Reporting owner expanded redaction to metadata, summary values, and candidate names/keys, preserving safe counts and evidence limitations. | Reporting/integrity suite; see final verification report. |
 | Destructive PostgreSQL test fixture | Tests refuse schema reset unless `TEST_POSTGRES_ALLOW_RESET=true`; local CI declares it only for its disposable service. | Local disposable service execution and fixture guard. |
 
-### Recorded runs
+### Historical focused runs — before final integration
 
 - Supported runtime: Python 3.12.14.
 - Combined existing security, session, target, auth, integration focused suite: **82 passed** before final identity/document/health-path additions.
@@ -48,13 +50,17 @@ Implementation and automated verification results will be appended after focused
 
 ## Explicit release boundary
 
-**Public demo:** anonymous, sample-only, per-session in-memory state. No shared workspace, user uploads, real provider credentials or external endpoints. State does not survive a new session/process restart. The operating system may retain process memory or swap; this is not an encrypted confidential-data environment. This stricter boundary intentionally prevents untrusted uploads and arbitrary paid calls on public infrastructure.
+**Native public demo:** anonymous, sample-only, per-session in-memory state. No shared workspace, user uploads, real provider credentials or external endpoints. State does not survive a new session/process restart. The operating system may retain process memory or swap; this is not an encrypted confidential-data environment. This stricter boundary intentionally prevents untrusted uploads and arbitrary paid calls on public infrastructure.
 
-**Design-partner beta:** explicit local mode, bind Streamlit to `127.0.0.1`, trusted operator, persistent local SQLite, owner-provided credentials, approved non-sensitive or appropriately governed datasets. Network health and real assistant response mapping can be verified against a private assistant. API tests cover credentials/errors without exposing credentials; a real provider/assistant integration still requires the partner's endpoint and credential. Rule-based redaction is a protection, not a guarantee that all personal or proprietary data is detected; review exports before sharing.
+**Trusted local design-partner mode:** explicit local mode, bind Streamlit to `127.0.0.1`, trusted operator, persistent local SQLite, owner-provided credentials, approved non-sensitive or appropriately governed datasets. Network health and real assistant response mapping can be verified against a private assistant. API tests cover credentials/errors without exposing credentials; a real provider/assistant integration still requires the partner's endpoint and credential. Rule-based redaction is a protection, not a guarantee that all personal or proprietary data is detected; review exports before sharing.
+
+**Published browser mode:** accepted only in actual WebAssembly, with tab-local in-memory state, approved custom uploads/saved reviews and visitor-entered provider keys. Arbitrary external assistant HTTP is unavailable. No host key fallback is permitted. Closing/reloading the tab or returning after the 24-hour inactivity limit clears unexported work. Downloaded workspaces retain original private content; report redaction and reset do not erase earlier downloads. Native processes cannot obtain this boundary by setting a browser flag.
 
 **Shared authenticated hosting:** trusted proxy that strips spoofable auth headers, blocks direct ingress, issues fresh identities, and provisions memberships; current supported managed PostgreSQL, egress controls, TLS, external-host allowlist, secret manager, logging/monitoring, backups and restore drills, durable workers and storage, malware scanning and parser isolation, and retention enforcement. These need operator infrastructure validation. The local service tests demonstrate application queries and row-level security behavior, not an operational production certification.
 
-**Live service:** untouched. The public application was ahead of this local feature baseline and already described private sessions; baseline code findings must not be reported as confirmed live exposures. Owner-approved deployment and an independent two-session smoke check are necessary before making claims about the live version.
+**Live service:** the integrated browser beta is published; its sample, independent simultaneous tabs and session reset were observed at the published origin. Custom import/review paths were exercised in the same build locally. These finite checks do not certify every hosted path, real-provider CORS/account access or sustained operation. The original local baseline findings remain distinct from any claim of a live incident.
+
+**Dependency scope:** native and wrapper audits passed at their recorded checks, but the reconstructed browser inventory retains advisory entries in four compiled packages. The [browser dependency review](browser-dependency-review.md) documents patched pure-Python versions, residual scope and eleven actual Wasm reachability tests; this is not a clean browser vulnerability scan.
 
 Final review also added known-credential echo protection: external parsed response keys and values are checked against resolved runtime credentials (including the token without a Bearer prefix). A match discards the response as an invalid execution and never passes redacted content through as valid quality evidence. Dedicated final session/target checks reached **41 cases** after this addition and URL/corpus/identity follow-ups; final integrated counts belong in the release verification report.
 

@@ -1,16 +1,18 @@
 # Plain-language interface review
 
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
 ## Purpose and evidence
 
 Audit date: 16 September 2026. Scope: the sample and custom workflows in `app.py`, plus `src/presentation.py` and `src/charts.py`. This is an implementation brief and acceptance checklist, not a claim that customer comprehension has been validated. Line references describe the source inspected before this interface revision; use the named render function when subsequent edits move them. Final implementation and verification results belong in [release review](release-review.md).
 
-The current decision summary is a useful starting point: it separates unusable calls from flagged answers, preserves synthetic limitations, and presents expected behavior beside the observed answer. The remaining problem is direct exposure of internal data structures. Hiding a JSON object in an expander still asks the user to interpret a data structure. The interface should answer a practical question in ordinary words; downloadable technical evidence can preserve the complete machine-readable record.
+At the pre-revision audit, the decision summary was a useful starting point: it separates unusable calls from flagged answers, preserves synthetic limitations, and presents expected behavior beside the observed answer. The remaining problem at that snapshot was direct exposure of internal data structures. Hiding a JSON object in an expander still asks the user to interpret a data structure. The interface should answer a practical question in ordinary words; downloadable technical evidence can preserve the complete machine-readable record.
 
 **Design rule:** first explain what happened, why it matters, and what to do. Show a meaningful number with its unit and evidence limits when helpful. Retain exact evidence and internal identifiers in storage and technical exports without making users decode them to operate the product.
 
 No new capability is required merely to simplify these displays. Keep the existing access boundaries, consent, validation, evidence accounting, immutable provenance, and conservative verdicts.
 
-## Findings and proposed changes
+## Historical findings and proposed changes
 
 | Priority | Surface and source location at audit | Current friction | Required replacement and acceptance |
 |---|---|---|---|
@@ -121,7 +123,7 @@ Plain language must not alter exact provider model identifiers in network calls,
 
 ## Acceptance checklist for implementation and verification
 
-These boxes are intentionally open at audit time. Complete them only against the revised implementation and recorded verification. A code-level audit cannot establish first-time user comprehension.
+The checklist began open at audit time. Checked items below have concrete regression evidence in the integrated suite; they are engineering acceptance only. Broad visual consistency, complete accessibility and independent comprehension remain open where the evidence is incomplete. Checked items do not imply that every input or device has been tested.
 
 ### Sample journey
 
@@ -132,28 +134,28 @@ These boxes are intentionally open at audit time. Complete them only against the
 
 ### Custom preparation and connection
 
-- [ ] Create/edit a case without JSON syntax. Lists and dictionaries are not edited as raw cells; uploaded advanced settings survive a basic edit unchanged.
-- [ ] Round-trip legacy and versioned datasets; multiple acceptable answers/sources, prohibited answers, passages, variables, rubric, conversation/tool settings, tags, splits and stable case IDs are preserved.
+- [x] Create/edit a case without JSON syntax. Lists and dictionaries are not edited as raw cells; uploaded advanced settings survive a basic edit unchanged.
+- [x] Round-trip legacy and versioned datasets; multiple acceptable answers/sources, prohibited answers, passages, variables, rubric, conversation/tool settings, tags, splits and stable case IDs are preserved.
 - [ ] Test add, edit, remove, reorder and reopen; no unrelated case changes, stale values or silent clearing of hidden fields. Validation retains unsaved edits and names the visible repair.
 - [ ] Sources show readable file/passage metadata and actionable extraction warnings without internal database/hash columns.
 - [ ] The normal HTTPS connection needs readable field inputs and a credential, not JSON authoring. Advanced configuration remains supported with a validated human-readable summary.
-- [ ] Save causes no network request; explicit check/run consent, credential secrecy, preserved mappings, retry limits and consent invalidation still pass existing tests.
+- [x] Save causes no network request; explicit check/run consent, credential secrecy, preserved mappings, retry limits and consent invalidation still pass existing tests.
 
 ### Review, calibration and repeat use
 
 - [ ] Every release check has a meaningful label, status, actual/required value with units where available, and next action. Missing observations are never rendered as success or zero.
 - [ ] Calibration uses understandable labels/inputs, preserves independent-review exclusions, and explains false alarms/missed problems. Raw identifiers are absent from the screen.
 - [ ] “Confidence” is never presented as a measured probability of correctness; numerical score/interval explanations retain calibration and sample limits.
-- [ ] Current/candidate wording does not assert an improvement before a compatible real comparison. Unknown model identity does not remove a candidate from a chart or table.
+- [x] Current/candidate wording does not assert an improvement before a compatible real comparison. Unknown model identity does not remove a candidate from a chart or table.
 - [ ] History identifies saved evaluations by meaningful labels and dates; explains changed/same/missing/mixed evidence without hashes.
 - [ ] Incompatible/synthetic/partial comparisons remain inconclusive. Missing or failed cases never become “resolved.” New/resolved findings are understandable and inspectable.
 - [ ] Plots, axes, legends, hovers, filters, tables, empty states, success messages and advanced views use the same vocabulary; technical field names do not leak through generic dataframe/chart defaults.
-- [ ] Shareable reports remain clear and redacted. Technical export remains available for reproducibility without appearing as the default reading experience.
+- [x] Shareable reports remain clear and redacted. Technical export remains available for reproducibility without appearing as the default reading experience.
 
 ### Verification and usability evidence
 
-- [ ] Automated tests exercise missing measurements, unknown model, all-error runs, critical findings, synthetic evidence, incompatible comparisons, and structured-case round trips.
-- [ ] Existing privacy/isolation/authorization/credential/upload/network and deletion tests remain unchanged in strength and pass.
+- [x] Automated tests exercise missing measurements, unknown model, all-error runs, critical findings, synthetic evidence, incompatible comparisons, and structured-case round trips.
+- [x] Existing privacy/isolation/authorization/credential/upload/network and deletion tests remain unchanged in strength and pass.
 - [ ] AppTest exercises the revised sample and custom paths; browser checks cover navigation, labels, focus and keyboard operation. Narrow layout is only marked verified when the actual viewport changed.
 - [ ] At least one independent first-time target user can explain the next action and the evidence limits without verbal guidance. Until that study occurs, report comprehension as unvalidated.
 
@@ -173,8 +175,24 @@ After this audit, the implementation owner assigned chart presentation and the s
 
 Focused verification: **40 passed in 1.66 seconds** across `test_chart_evidence_display.py`, `test_html_report_display.py` and `test_cli_gate_reports.py`. Ruff and formatting passed for all five touched Python files; mypy passed for the two changed modules; `git diff --check` passed. HTML tests retain exact policy/version assertions and also verify the readable threshold and safety/calibration status. No application-screen completion or customer-comprehension claim follows from these focused checks; the implementation owner's integrated tests and browser review remain authoritative.
 
-## Integrated follow-up verification
+## Historical plain-language verification — before main integration
 
-The root implementation subsequently completed the screen, case-editor, connection and calibration changes. The final supported-Python suite, including disposable PostgreSQL, passed **573 tests with zero skips** and **85.71% branch-enabled source coverage**. Ruff, formatting, mypy, dependency consistency and diff checks passed. The fresh browser sample was exercised again: 32 fictional executions, 19 flagged answers and 3 execution errors, with an explicit prohibition on a launch verdict. The release-check explanation now wraps as ordinary text, verified in the narrow browser panel after a table had clipped it.
+The root implementation subsequently completed the screen, case-editor, connection and calibration changes. That pre-integration supported-Python suite, including disposable PostgreSQL, passed **573 tests with zero skips** and **85.71% branch-enabled source coverage**. Ruff, formatting, mypy, dependency consistency and diff checks passed. The fresh browser sample was exercised again: 32 fictional executions, 19 flagged answers and 3 execution errors, with an explicit prohibition on a launch verdict. The release-check explanation now wraps as ordinary text, verified in the narrow browser panel after a table had clipped it.
 
-AppTest covers sample/custom pages without inline JSON, actual question-editor submission and persistence, coverage/validation recovery, connection import drafts, independent-review controls and preserved hidden evidence. Original answers and passages remain original evidence; their own citation syntax is not rewritten. Optional machine-readable exports remain supported for engineers. This checklist is a traceability aid, not a claim that every customer or mobile acceptance check is complete. See the [updated local release review](release-review.md#11-plain-language-follow-up) for changes, verification artifacts and remaining external validation.
+AppTest covers sample/custom pages without inline JSON, actual question-editor submission and persistence, coverage/validation recovery, connection import drafts, independent-review controls and preserved hidden evidence. Original answers and passages remain original evidence; their own citation syntax is not rewritten. Optional machine-readable exports remain supported for engineers. This checklist is a traceability aid, not a claim that every customer or mobile acceptance check is complete. See the [historical plain-language release review](release-review.md#11-plain-language-follow-up--pre-integration-history) for changes, verification artifacts and remaining external validation.
+
+## Published integration and acceptance evidence
+
+The integrated native suite passed 1,061 tests with zero skips and 87.86% branch-enabled source coverage; later focused copy checks are recorded separately. The published browser sample reaches the 32-case readable decision summary, preserves its three intended simulated infrastructure errors and synthetic no-launch verdict, and resets without retaining the prior session. Separate live tabs were exercised. Local browser custom source uploads, duplicate recovery, retrieval, saved-answer review/replacements and consent/project prerequisites were observed. Exact delivery/CI state remains in the [release review](release-review.md) and [product history](../PRODUCT_EVOLUTION.md).
+
+Checked-item evidence:
+
+| Acceptance item | Concrete regression source |
+|---|---|
+| Plain-language case editing and preserved advanced fields | `tests/test_case_editor.py` and `tests/test_ui_case_editor.py`: scalar editor fields, legacy/versioned inputs, hidden rules, identities and actual submission/persistence |
+| No call on save; explicit and plan-bound consent | `tests/test_partner_workflows.py`, `tests/test_preflight_key_status_ui.py`: no-network setup, retained mappings/keys, browser/local preflight and invalidation after changed retry limits |
+| Current/candidate labels and missing model groups | `tests/test_chart_evidence_display.py`: no asserted improvement, missing model retained, distinct candidate/verdict mapping |
+| Readable, redacted primary report with exact optional evidence | `tests/test_html_report_display.py`, `tests/test_cli_gate_reports.py`, privacy regressions: visible findings/limits, non-executable metadata, preserved policy and redaction |
+| Adverse evidence states and safeguards retained | Integrated scoring/aggregation/comparison/session/target/storage/role suites; actual Wasm dependency tests are separately scoped in the dependency review |
+
+Open checklist items are not automatically unresolved implementation defects: some are broader acceptance claims than a finite regression suite establishes. Independent first-time comprehension is still unmeasured. Agent-driven narrow-panel and keyboard observations do not complete a mobile, focus-order or assistive-technology audit. Original answer/source text can contain its own technical syntax; presenting that evidence verbatim is distinct from exposing internal configuration widgets.

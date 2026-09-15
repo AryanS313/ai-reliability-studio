@@ -1,12 +1,12 @@
 # Design-partner beta: release review
 
-**16 September 2026 · Browser beta published and verified; GitHub handoff in progress · Original baseline `feature` at `d2fb73e`**
+**16 September 2026 · Browser beta published and verified; release merged into GitHub main · Original baseline `feature` at `d2fb73e`**
 
 ## Decision and scope
 
-**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's native tests, browser build and deployed-origin checks are complete within sections 12–13's scope. The complete branch is pushed and the release PR is open; remote checks and merge remain in progress. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
+**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's native tests, browser build and deployed-origin checks are complete within sections 12–13's scope. The complete release is pushed and [merged into main](https://github.com/AryanS313/ai-reliability-studio/pull/12) at `026a3e7` after both branch and PR checks passed. This handoff revision updates the supporting documents; the published browser source is unchanged. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
 
-The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Section 12 records the integrated scope and outstanding release checks. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
+The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Sections 12–13 record the integrated scope, completed release checks and remaining external acceptance. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
 
 The obsolete Python 3.9 environment was preserved as `.venv-py39-backup`; the supported native environment is Python 3.12.14. Existing data and unrelated worktrees are preserved. The integration checkout is `/Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio-release`; the original checkout remains available. Verification fixtures, logs and disposable infrastructure stay outside committed application inputs.
 
@@ -165,7 +165,7 @@ No known failing local critical security/integrity invariant remains in the veri
 1. **Approved actual assistant and access:** supply a read-only staging endpoint, request/response contract, approved cases and scoped credential entered through the local password input or secret environment. Verify its actual HTTPS/TLS/auth/rate-limit behavior and complete a real run. No such account or endpoint was supplied; a local fixture cannot substitute.
 2. **Independent reviewers and first-time users:** recruit qualified engineers/domain owners, adjudicate representative held-out labels, and observe unassisted setup/result teach-back. Demand, evaluator validity, comprehension, recurrence and outcomes cannot be proved by the authoring agent.
 3. **Mobile acceptance:** exercise real narrow viewports and assistive technology using working device/browser controls before claiming responsive/accessibility completion. The available size override did not apply.
-4. **Hosted rollout acceptance:** owner authorization is now supplied and integration with main is underway. The exact combined build, CI and final-origin session/data/egress checks must pass before recording the hosted rollout as verified. Local tests do not certify live isolation.
+4. **Hosted rollout gate resolved:** the combined build, remote CI and bounded final-origin sample/isolation/reset checks passed; the release is merged and published. This supersedes the earlier rollout blocker. Sustained operation, actual provider CORS/account acceptance and enterprise infrastructure remain unverified.
 
 These remain unverified claims or deployment gates; approval alone does not resolve them. A controlled local design-partner pilot can collect the missing evidence with approved non-sensitive inputs; do not market it as validated production readiness.
 
@@ -250,7 +250,7 @@ Review and stage logical hunks; several concerns share `app.py` and tests. Do no
 4. **Guided release workflow:** six-step UI, project/input restoration, connection/preflight, decision summary and browser/AppTest regressions.
 5. **Product measurement and handoff:** privacy-safe event schema, ICP/research/discovery, metrics, gap matrix and documentation.
 
-Publication/deployment authorization has been supplied. Complete integration against current main, rerun checks on the combined state, inspect staged credential/artifact exclusions and preserve the reviewed release evidence before publishing.
+This was the suggested grouping before publication. Implementation and main integration are now committed; the complete release passed checks and merged. The publication receipt below records exact source and delivery evidence. No history rewrite or artificial regrouping was performed.
 
 ## 11. Plain-language follow-up — pre-integration history
 
@@ -294,7 +294,7 @@ Follow-up artifacts: [presentation audit and acceptance checklist](plain-languag
 | Actual WebAssembly dependency tests | **11 passed in 4.30 seconds**, one pandas/PyArrow deprecation warning, using Node 24.14.0 with the assembled Pyodide 0.26.4 / Python 3.12.1 runtime. `sys.platform` was `emscripten`; this was not native Python with a simulated platform. |
 | Protobuf implementation | Loaded **5.29.6, pure-Python backend** from site-packages; no provider protobuf namespace or loaded `google._upb`. Protobuf Struct and Streamlit 1.41.0 ForwardMsg round trips passed. |
 | Local browser UI | Browser boot and reload worked. The primary sample completed **32 fictional executions**, opened a readable decision view without exposed JSON, and retained its **three intended simulated infrastructure errors**. Those fixture errors are expected evidence, not failed application execution. The sample-only error copy now labels those failures as simulated and confirms no external calls; its focused regression passed after the full suite. Saved-answer review, review persistence, fictional replacements, project consent/creation, provider prerequisites, PDF/DOCX/PPTX upload/indexing, duplicate recovery and retrieval were also exercised in the actual local browser. |
-| Publication and GitHub | Sites publication succeeded: public version 8 serves application release `2026.09.16.1`. GitHub initially rejected the release-branch push for missing `workflow` scope. The owner has now completed authorization and that scope is verified. Push, PR, merge and remote CI completion remain to be recorded. |
+| Publication and GitHub | Sites publication succeeded: public version 8 serves application release `2026.09.16.1`. GitHub initially rejected missing `workflow` scope; the owner authorized it. The full release then passed branch/PR checks and [merged into main](https://github.com/AryanS313/ai-reliability-studio/pull/12) at `026a3e7`. |
 | Final hosted origin | Published source hash matches the reviewed build. The public root boots inside its iframe; all 32 sample cases render the synthetic-only verdict and simulated-error explanation, with no browser error logs. A second simultaneous live tab starts without the first tab’s project or results. Custom uploads/reviews were exercised in the same build locally; provider CORS/real-account acceptance still requires credentials. |
 | Real assistant/account, independent domain labels, first-time-user comprehension and adoption | Remain unvalidated; no customer or real-provider outcomes are inferred from fixtures. |
 
@@ -303,17 +303,18 @@ The ignored `.local-verification/final-merged-*` logs record the combined native
 The presentation refinement passed its focused regression. Final hosted observations and source identifiers are recorded below. Successful builds and these scoped checks do not establish real-provider access, full mobile/accessibility acceptance, absence of all dependency vulnerabilities or enterprise production readiness.
 
 
-## 13. Publication receipt and external dependency
+## 13. Publication and GitHub completion receipt
 
-- Live app: https://ai-reliability-studio.a3103.chatgpt.site
+- Primary public app, restored at the owner’s request: https://ai-reliability-studio.streamlit.app/ . Updated six-step native public mode, the 32-case synthetic result, an empty simultaneous second session and clean reset were observed there after merge, with no browser error logs. It is sample-only and may hibernate.
+- Alternative browser app: https://ai-reliability-studio.a3103.chatgpt.site
 - Application release: `2026.09.16.1`.
 - Reviewed application commit: `b9d8131a7238c8d3abda03722f0f36294baf5ddf`; present in the original local checkout and integration checkout.
 - Sites source commit: `42fbd99c1b3483b95ad1c182ef5de5ab39f2a30c`; pushed to the existing Site source repository.
 - Sites version 8 published successfully to the existing public audience.
 - Published application source manifest: `0ee0ca87c77811bcc52adc751ab8d70c03b24f6356993e6bdb04c05f912d460c`, fetched from the live origin and matched to the reviewed build.
 - Live `/studio` returns HTTP 200 with COOP `same-origin`, COEP `require-corp`, CORP `same-origin`, a provider-restricted CSP and `nosniff`. The embedded public root boots to the guided start screen; its 32-case sample and a second independent tab were verified after publication. Ending the sample session returned to an empty start screen without the prior project/results. No browser runtime errors were recorded.
-- The initial GitHub authorization blocker is resolved: the owner completed the device flow and `workflow` scope is verified. Push `codex/design-partner-release`, create the prepared PR, run remote CI, and merge after checks pass. No workflow controls were removed to bypass the denial.
-- Python 3.11 and the Docker image were not executed on this machine; their configured remote CI checks remain pending. Local Python 3.12 and PostgreSQL checks are complete.
+- GitHub release: [Ship guided support-assistant reviews with secure browser workspaces](https://github.com/AryanS313/ai-reliability-studio/pull/12) merged at `026a3e77399b22fedfe94744c872ddf7047a95e1` on 16 September IST. Both [branch](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35035170967) and [PR](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35035175653) check runs passed on `a603b79`. All five jobs also passed on the [merged main revision](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35035791475). No workflow control was removed to bypass the earlier authorization denial or check failures.
+- Remote Python 3.11 and 3.12 each passed **1,055 tests**, with **six PostgreSQL tests skipped in those jobs and passed in the dedicated service job**; both reported **85.66%** source coverage. Their audit/lint/format/type/bootstrap/dependency-builder/synthetic CLI checks passed. Container non-root identity, web health and saved-answer sample passed. These executions occurred on GitHub runners, not this Mac; local combined-service verification remains **1,061 passed / zero skipped / 87.86%**.
 - Real provider credentials/account compatibility, domain calibration, independent first-time-user comprehension, adoption and customer outcomes remain unvalidated. The scoped browser dependency exceptions remain explicit in the security review.
 
 ### Current candid ratings
@@ -329,12 +330,18 @@ These are engineering/product-owner assessments, not customer evidence.
 | Evaluation integrity | 8 | Versioned evidence and conservative verdicts; real domain calibration remains necessary |
 | Reliability | 7 | Broad automated and browser verification; sustained load and live-account behavior unverified |
 | Security and privacy | 7 | Verified isolation and safeguards; scoped browser advisories remain, without blanket security certification |
-| Design-partner readiness | 7 | Published bounded beta; GitHub push/remote CI pending, and partner acceptance not measured |
+| Design-partner readiness | 7 | Published and merged bounded beta with passing remote checks; partner acceptance not measured |
 | Portfolio strength | 7 | Credible ownership artifacts; discovery, adoption, repeated use and customer outcomes still need real evidence |
 
 
 ### GitHub verification correction — Python 3.11 setup
 
-The first remote run passed browser distribution, PostgreSQL and the public container startup/sample checks. Python 3.11 stopped before tests because its runner inherited setuptools 79.0.1, reported under PYSEC-2026-3447 (two duplicate advisory records, one affected package). Python 3.12 passed the audit. The native requirements and constraints now install setuptools 83.0.0 on Python 3.11 so manual installation, bootstrap and CI receive the same correction. The audit is unchanged; no finding is suppressed. The corrected remote checks and merge still require observed completion. The published Wasm runtime is unaffected by this native bootstrap dependency.
+The first remote run passed browser distribution, PostgreSQL and the public container startup/sample checks. Python 3.11 stopped before tests because its runner inherited setuptools 79.0.1, reported under PYSEC-2026-3447 (two duplicate advisory records, one affected package). Python 3.12 passed the audit. The native requirements and constraints now install setuptools 83.0.0 on Python 3.11 so manual installation, bootstrap and CI receive the same correction. The audit is unchanged; no finding is suppressed. The corrected remote checks passed and the release merged, as recorded above. The published Wasm runtime is unaffected by this native bootstrap dependency.
 
 The Python 3.12 job subsequently passed its test suite but failed the standalone synthetic CLI smoke command: the workflow omitted `APP_ACCESS_MODE=local`, so the default public mode correctly rejected unbound persistent storage. The smoke step now explicitly selects local mode, as the documented CLI command does. Its required exit code 2 and synthetic no-launch report assertion are retained. This changes CI configuration, not public application privileges.
+
+The corrected CLI smoke subsequently passed in both Python versions on both branch and PR checks. All other required jobs also passed before merge. The final documentation pass reconciled the eight supporting product/audit documents, retained historical baselines and validated local links and the 36 complete metric contracts. These changes affect release reporting; no new customer outcome or browser deployment is claimed.
+
+### Public-address follow-up
+
+The owner requested a branded domain without the hosting provider’s name, then selected the existing Streamlit address as the interim primary link while away. GitHub’s homepage and the README are updated accordingly. The existing host supports custom domains, but no hostname, DNS account or purchase has been selected; no new service or charge was created. The browser alternative stays available. See [hosting and address plan](../HOSTING_OPTIONS.md) for the remaining external dependency and new-origin acceptance steps.

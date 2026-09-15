@@ -1,6 +1,8 @@
 # Core workflow baseline and verification
 
-Baseline inspection: 2026-09-16, commit `d2fb73e`, before the core fixes described below. The branch was initially clean. This is an engineering audit, not customer research or measured adoption. The parent audit records browser observations and the supported-environment full test run.
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
+Baseline inspection: 2026-09-16, commit `d2fb73e`, before the core fixes described below. The branch was initially clean. This is an engineering audit, not customer research or measured adoption. The release review records subsequent integrated and published-browser observations; this baseline table is historical.
 
 ## Observed baseline
 
@@ -14,7 +16,7 @@ Baseline inspection: 2026-09-16, commit `d2fb73e`, before the core fixes describ
 | Dataset | CSV/JSON/JSONL parsing, strict booleans, case IDs, schema validation and risk coverage; dataset tests | Coverage and held-out declarations are self-reported evidence, not proof of representativeness. |
 | Synthetic run | Deterministic answers and failure fixtures; independent synthetic verdict | Workflow demonstration only; report keeps launch blocked. |
 | Direct provider | Provider selection, secret resolver, safe error classification; mocked provider integration tests | Real authenticated call requires account/credential; no paid API calls performed by this audit. |
-| External assistant | HTTPS endpoint, JSON templates/mappings, health check, bounded responses and classified HTTP failures; adapter tests | Low-level JSON setup; parent owns simple form. Real assistant endpoint/credential remains an external validation dependency. |
+| External assistant | HTTPS endpoint, JSON templates/mappings, health check, bounded responses and classified HTTP failures; adapter tests | At baseline, setup required low-level JSON; the integrated native app now provides a simple form. Real assistant endpoint/credential remains an external validation dependency. |
 | Calibration | Held-out metrics and immutable thresholds; calibration tests | **P0 trust gap:** a qualifying single-label calibration was attached as though every evaluator was calibrated; evaluator version was not checked. |
 | Run interpretation | Candidate-specific gates, deterministic critical labels, separate infrastructure failures | **P1:** sample-size gate counted failed attempts; critical failure verdict could be hidden by missing calibration; unknown cost could pass budget gate as zero. |
 | Failure analysis | Evidence, citations, reason codes, next-action suggestions, uncertainty and human-review warnings | Explanations are heuristic diagnoses; independent expert confirmation remains necessary. |
@@ -29,11 +31,11 @@ No instrumented user baseline exists. Time-to-first-value, completion rate, comp
 
 ## Verification log
 
-Focused baseline and post-change checks, material fixes, exact test outcomes and remaining dependencies are appended below as work completes.
+The entries below retain the sequence and focused results of the pre-integration audit; later full-suite and delivery evidence is maintained in the release review.
 
-### Completed local core changes
+### Historical local core changes — before integration
 
-The local `feature` baseline differs materially from the live application's newer history. Read-only inspection of local `origin/main` at `f113ce1` found already-solved evaluator issues. This work selectively reuses the repository's reviewed `deterministic-v7` scoring implementation and four regression modules, plus a compatible citation support-state field. No merge, branch switch, commit or remote mutation was performed. The newer saved-response workflow was outside this bounded core change.
+The local `feature` baseline differs materially from the live application's newer history. Read-only inspection of local `origin/main` at `f113ce1` found already-solved evaluator issues. This work selectively reuses the repository's reviewed `deterministic-v7` scoring implementation and four regression modules, plus a compatible citation support-state field. No merge or remote mutation occurred during that bounded core subtask. The newer saved-response workflow was outside that subtask, then preserved in the subsequent integrated and published release.
 
 | Material fix | Acceptance evidence |
 |---|---|
@@ -69,4 +71,8 @@ Withheld runtime-credential echoes are recorded as critical privacy evidence wit
 
 ### Final bounded-subtask verification
 
-Final core/interpretation/calibration/scoring/report/execution-recovery suite: **212 passed in 3.48s** on Python 3.12.14. Ruff lint and format checks passed for 10 touched source modules; mypy passed for the same 10. Fresh sample: **32 logical executions, 29 quality-scored, 10 passes, 19 flagged answers (12 Needs Review, 3 Expected Answer Mismatch, 2 Unsupported Claim, 1 Citation Failure, 1 Privacy Violation), and 3 infrastructure errors**. Its verdict remains **Synthetic demonstration — no launch verdict**. All 32 retain expected behavior; only the 3 intentional infrastructure fixtures omit reference answers. Final full-suite/coverage/browser results remain in the parent integration report.
+Final core/interpretation/calibration/scoring/report/execution-recovery suite: **212 passed in 3.48s** on Python 3.12.14. Ruff lint and format checks passed for 10 touched source modules; mypy passed for the same 10. Fresh sample: **32 logical executions, 29 quality-scored, 10 passes, 19 flagged answers (12 Needs Review, 3 Expected Answer Mismatch, 2 Unsupported Claim, 1 Citation Failure, 1 Privacy Violation), and 3 infrastructure errors**. Its verdict remains **Synthetic demonstration — no launch verdict**. All 32 retain expected behavior; only the 3 intentional infrastructure fixtures omit reference answers. Integrated full-suite/coverage/browser results are in the release review; this 212-test result remains a historical focused count.
+
+## Integrated runtime preservation
+
+The published integration preserves main's explicit saved-answer reviews, replacement comparisons, compatible restoration, source order/values/spans and extraction notices. Provider-native instructions, actual attempts/cache identity, bounded Retry-After handling and missing Gemini billing evidence remain distinct from requested configuration. The 32-case primary sample and three-answer authored review are separate fixtures. True Wasm browser mode supports saved imports and explicit-key provider calls; external assistant endpoints require trusted native mode. None of these engineering checks establish real account acceptance, independent comprehension or customer retention.

@@ -1,12 +1,14 @@
 # Design-partner success metric dictionary
 
-Version 1 — 16 September 2026. Owner: product lead. This is a measurement contract and proposed pilot targets, **not a claim of traction or achieved targets**. Local test results belong in the verification report; customer measures remain unmeasured until research or pilot usage occurs.
+**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+
+Version 1 — 16 September 2026. Owner: product lead. This is a measurement contract and proposed pilot targets, **not a claim of traction or achieved targets**. Native, Wasm and deployed-browser verification belongs in the release review; customer measures remain unmeasured until research or pilot usage occurs.
 
 ## Measurement rules
 
 - The outcome to optimize is **a team making a documented, evidence-supported decision about an actual assistant revision**, then returning when another revision needs evaluation. A high score, passing verdict, page view, or demo run is not that outcome.
 - Categories have distinct questions: acquisition = whom we reach; activation = first value; workflow = completing a task; integrity = whether evidence is valid; reliability = whether execution works; security = whether permitted boundaries hold; retention = return behavior; outcomes = value to the customer; operability = ability to maintain the service. One event may support more than one metric; do not sum unlike metrics into a health score.
-- Cohort unit is an eligible **team/project**, not a browser, seat, or fabricated visitor identity. Within a local session, a session identifier can measure a path; it cannot identify a returning person. Deduplicate runs by stored run identity and intentional action, not Streamlit rerenders.
+- Cohort unit is an eligible **team/project**, not a browser, seat, or fabricated visitor identity. Within a single local/browser session, a journey identifier can measure a path; it cannot identify a returning person. Deduplicate runs by stored run identity and intentional action, not Streamlit rerenders.
 - Split synthetic, real foundation-model, external-assistant, and local test-harness activity. Demo completion measures onboarding only. Real customer activation, retention, and outcomes exclude synthetic runs, internal tests, and founder-assisted demonstrations unless separately labeled.
 - Report numerator, denominator, dates, environment, assistance, and exclusions. A zero denominator is **not measurable**, not 0% or 100%. Missing events do not imply success. For fewer than 20 teams, show counts prominently; pilot thresholds are learning rules, not statistically validated benchmarks.
 - Product targets below are initial hypotheses for the first 5–10 eligible partner teams. Security/integrity invariants apply even at sample size one. Targets are not service-level commitments.
@@ -362,6 +364,14 @@ The beta has **no external analytics collector**. Any central analytics or cross
 
 ## Review cadence and decision rights
 
-Before each local release: engineering owns D/F/I invariant checks and the critical golden paths. At every partner run: engineer/domain owner reviews execution health, case failures, missing evidence, and compatibility; the partner retains the release decision. Weekly during pilots: product lead reviews A/B/C friction, G repeat opportunities, H confirmed value, and qualitative counterevidence. Monthly: revise ICP/targets with a dated change log, without rewriting prior denominators or results.
+Before each release: engineering owns D/F/I invariant checks and the critical golden paths. At every partner run: engineer/domain owner reviews execution health, case failures, missing evidence, and compatibility; the partner retains the release decision. Weekly during pilots: product lead reviews A/B/C friction, G repeat opportunities, H confirmed value, and qualitative counterevidence. Monthly: revise ICP/targets with a dated change log, without rewriting prior denominators or results.
 
-Until independent participants and a real approved endpoint are available, A/B/C/G/H customer targets remain **unmeasured external validation**, not “done.” Engineering results can justify a local reviewable beta; they cannot establish adoption or domain accuracy.
+Until independent participants and a real approved endpoint are available, A/B/C/G/H customer targets remain **unmeasured external validation**, not “done.” Engineering and deployed-browser observations support the published bounded beta; they cannot establish adoption, independent comprehension or domain accuracy.
+
+## Interpretation after publication
+
+The 145-pass/4-skip/76.96% pre-change baseline and all U-C/U-R entries remain unchanged. Later 1,061-pass native verification, eleven actual Wasm checks and observed published sample/isolation/reset are **T/O engineering observations**, not achieved customer targets or a prospective operating cohort. Remote job outcomes and revisions are maintained in the release review rather than copied into this dictionary.
+
+The original B3/B4/C1 endpoint-activation measures describe the instrumented live-execution cohort. The published saved-answer path also supports a pilot without arbitrary browser HTTP, but an uploaded file alone is not real activation. Record that path separately through H/R evidence: capture provenance as declared or independently checked, explicit domain review, an actionable finding or evidence gap, assistance and a later release opportunity. Do not silently add saved imports to live-call success denominators, infer authenticated capture from a filename, or assume event coverage for the saved-answer workflow. Any metric-contract extension must be versioned before reporting its cohort results.
+
+Native anonymous sample sessions and actual browser workspaces have different lifetimes. Browser work is tab-local and clears on closing/reload or return after 24 hours of inactivity; downloaded original-content workspaces are separate copies. Native server memory expiry and audit/backup retention have their own boundaries. Measure retention only with consented team/release evidence, never by joining anonymous sessions.
