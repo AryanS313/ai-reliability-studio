@@ -4,9 +4,9 @@
 
 A design-partner beta for small product teams shipping assistants grounded in policies and knowledge articles. Run approved test cases against a staging assistant, inspect consequential failures and source evidence, then compare the next revision with its baseline.
 
-[Open the browser app](https://ai-reliability-studio.a3103.chatgpt.site/) · [Product brief](docs/design-partner/product-brief.md) · [Setup and deployment](docs/DEPLOYMENT.md)
+[Open the browser app](https://ai-reliability-studio.a3103.chatgpt.site/) · [Product brief](docs/design-partner/product-brief.md) · [Product evolution and current state](docs/PRODUCT_EVOLUTION.md) · [Setup and deployment](docs/DEPLOYMENT.md)
 
-> Release integration combines the guided release workflow with the browser and saved-answer capabilities from main. The owner has authorized shipping; final combined checks and live verification are tracked in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
+> Release integration combines the guided release workflow with the browser and saved-answer capabilities from main. The browser beta is published; combined checks, live verification and the remaining GitHub handoff are tracked in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
 
 ## Use the browser app
 

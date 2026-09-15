@@ -1,10 +1,10 @@
 # Design-partner beta: release review
 
-**16 September 2026 · Integrated release verification in progress · Original baseline `feature` at `d2fb73e`**
+**16 September 2026 · Browser beta published and verified; GitHub handoff in progress · Original baseline `feature` at `d2fb73e`**
 
 ## Decision and scope
 
-**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's final tests, build, remote CI and deployed-origin verification are still being completed. This document does not mark those steps passed before their results are recorded.
+**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's native tests, browser build and deployed-origin checks are complete within sections 12–13's scope. GitHub authorization has now succeeded; push, remote CI and merge remain to be recorded. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
 
 The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Section 12 records the integrated scope and outstanding release checks. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
 
@@ -294,7 +294,7 @@ Follow-up artifacts: [presentation audit and acceptance checklist](plain-languag
 | Actual WebAssembly dependency tests | **11 passed in 4.30 seconds**, one pandas/PyArrow deprecation warning, using Node 24.14.0 with the assembled Pyodide 0.26.4 / Python 3.12.1 runtime. `sys.platform` was `emscripten`; this was not native Python with a simulated platform. |
 | Protobuf implementation | Loaded **5.29.6, pure-Python backend** from site-packages; no provider protobuf namespace or loaded `google._upb`. Protobuf Struct and Streamlit 1.41.0 ForwardMsg round trips passed. |
 | Local browser UI | Browser boot and reload worked. The primary sample completed **32 fictional executions**, opened a readable decision view without exposed JSON, and retained its **three intended simulated infrastructure errors**. Those fixture errors are expected evidence, not failed application execution. The sample-only error copy now labels those failures as simulated and confirms no external calls; its focused regression passed after the full suite. Saved-answer review, review persistence, fictional replacements, project consent/creation, provider prerequisites, PDF/DOCX/PPTX upload/indexing, duplicate recovery and retrieval were also exercised in the actual local browser. |
-| Publication and GitHub | Sites publication succeeded: public version 8 serves application release `2026.09.16.1`. GitHub rejected the release-branch push because the current OAuth login lacks `workflow` scope for `.github/workflows/ci.yml`; user sign-in/authorization is required. No GitHub PR, merge or remote CI run has occurred. |
+| Publication and GitHub | Sites publication succeeded: public version 8 serves application release `2026.09.16.1`. GitHub initially rejected the release-branch push for missing `workflow` scope. The owner has now completed authorization and that scope is verified. Push, PR, merge and remote CI completion remain to be recorded. |
 | Final hosted origin | Published source hash matches the reviewed build. The public root boots inside its iframe; all 32 sample cases render the synthetic-only verdict and simulated-error explanation, with no browser error logs. A second simultaneous live tab starts without the first tab’s project or results. Custom uploads/reviews were exercised in the same build locally; provider CORS/real-account acceptance still requires credentials. |
 | Real assistant/account, independent domain labels, first-time-user comprehension and adoption | Remain unvalidated; no customer or real-provider outcomes are inferred from fixtures. |
 
@@ -312,7 +312,7 @@ The presentation refinement passed its focused regression. Final hosted observat
 - Sites version 8 published successfully to the existing public audience.
 - Published application source manifest: `0ee0ca87c77811bcc52adc751ab8d70c03b24f6356993e6bdb04c05f912d460c`, fetched from the live origin and matched to the reviewed build.
 - Live `/studio` returns HTTP 200 with COOP `same-origin`, COEP `require-corp`, CORP `same-origin`, a provider-restricted CSP and `nosniff`. The embedded public root boots to the guided start screen; its 32-case sample and a second independent tab were verified after publication. Ending the sample session returned to an empty start screen without the prior project/results. No browser runtime errors were recorded.
-- GitHub publication is blocked by account authorization, not code or test failure. Complete `gh auth refresh --hostname github.com --scopes workflow`, then push `codex/design-partner-release`, create the prepared PR, run remote CI, and merge after checks pass. Do not remove workflow changes to evade the permission restriction.
+- The initial GitHub authorization blocker is resolved: the owner completed the device flow and `workflow` scope is verified. Push `codex/design-partner-release`, create the prepared PR, run remote CI, and merge after checks pass. No workflow controls were removed to bypass the denial.
 - Python 3.11 and the Docker image were not executed on this machine; their configured remote CI checks remain pending. Local Python 3.12 and PostgreSQL checks are complete.
 - Real provider credentials/account compatibility, domain calibration, independent first-time-user comprehension, adoption and customer outcomes remain unvalidated. The scoped browser dependency exceptions remain explicit in the security review.
 
@@ -329,5 +329,5 @@ These are engineering/product-owner assessments, not customer evidence.
 | Evaluation integrity | 8 | Versioned evidence and conservative verdicts; real domain calibration remains necessary |
 | Reliability | 7 | Broad automated and browser verification; sustained load and live-account behavior unverified |
 | Security and privacy | 7 | Verified isolation and safeguards; scoped browser advisories remain, without blanket security certification |
-| Design-partner readiness | 7 | Published bounded beta; GitHub permission/remote CI pending, and partner acceptance not measured |
+| Design-partner readiness | 7 | Published bounded beta; GitHub push/remote CI pending, and partner acceptance not measured |
 | Portfolio strength | 7 | Credible ownership artifacts; discovery, adoption, repeated use and customer outcomes still need real evidence |
