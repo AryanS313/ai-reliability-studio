@@ -30,3 +30,7 @@ data/*.sqlite3
 *.sqlite
 *.sqlite3
 *.sqlite-journal
+
+# Browser vendor archives are reconstructed from pinned inputs.
+browser_runtime/dependencies/cache/
+browser_site/.build/

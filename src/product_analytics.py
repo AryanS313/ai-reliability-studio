@@ -34,7 +34,7 @@ EVENTS = frozenset(
     }
 )
 ENUMS = {
-    "mode": {"public-demo", "local", "authenticated"},
+    "mode": {"public-demo", "local", "authenticated", "browser"},
     "target_type": {"synthetic_mock", "foundation_model", "external_api"},
     "outcome": {"success", "partial", "failure", "inconclusive"},
     "stage": {"project", "documents", "dataset", "target", "run", "review", "export"},

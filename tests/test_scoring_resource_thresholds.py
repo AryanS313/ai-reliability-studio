@@ -3,7 +3,7 @@
 import pytest
 
 from src import config
-from src.calibration import EvaluatorThresholdConfiguration, calibration_for_run
+from src.calibration import EvaluatorThresholdConfiguration, calibration_for_run, validate_calibration_for_run
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION, classify_failure, score_result
 
 
@@ -86,3 +86,10 @@ def test_calibration_from_before_zero_limit_fix_cannot_be_reused_as_current():
 
     with pytest.raises(ValueError, match="version"):
         calibration_for_run(prior_result, thresholds)
+    with pytest.raises(ValueError, match="evaluator version"):
+        validate_calibration_for_run(
+            prior_result,
+            thresholds,
+            evaluator_version=EVALUATOR_VERSION,
+            label_semantics_version=LABEL_SEMANTICS_VERSION,
+        )

@@ -8,9 +8,11 @@ from src.domain import Role
 from src.storage import SQLiteRepository
 
 
-def role_app(tmp_path, role):
+def role_app(monkeypatch, tmp_path, role):
     repository = SQLiteRepository(tmp_path / f"{role.value}.sqlite3")
     database.set_repository(repository)
+    # AppTest starts a separate thread; ContextVar bindings intentionally do not transfer.
+    monkeypatch.setattr(database, "repository_from_url", lambda: repository)
     owner = repository.local_context()
     project = repository.create_project(owner, {"name": "Saved release"})
     configuration = {"name": "Assistant", "endpoint": "https://example.test/answer", "health_check_path": "/health"}
@@ -33,7 +35,7 @@ def test_read_only_roles_cannot_connect_run_sample_or_delete(tmp_path, monkeypat
     calls = []
     monkeypatch.setattr("src.targets.ExternalHTTPTarget.execute", lambda *args, **kwargs: calls.append("execute"))
     monkeypatch.setattr("src.targets.ExternalHTTPTarget.health_check", lambda *args, **kwargs: calls.append("health"))
-    app, repository, owner = role_app(tmp_path, role)
+    app, repository, owner = role_app(monkeypatch, tmp_path, role)
     assert not app.exception
     assert next(item for item in app.button if item.label == "Try the sample review").disabled
     for page in ("Connect", "Evaluate"):
@@ -57,8 +59,8 @@ def test_read_only_roles_cannot_connect_run_sample_or_delete(tmp_path, monkeypat
         assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 0
 
 
-def test_reviewer_can_calibrate_but_cannot_edit_project_assets(tmp_path):
-    app, _, _ = role_app(tmp_path, Role.REVIEWER)
+def test_reviewer_can_calibrate_but_cannot_edit_project_assets(tmp_path, monkeypatch):
+    app, _, _ = role_app(monkeypatch, tmp_path, Role.REVIEWER)
     for page in ("Knowledge Base", "System Prompt", "Evaluation Dataset"):
         app.selectbox(key="advanced_tool").set_value(page).run(timeout=30)
         assert not app.exception
@@ -72,8 +74,8 @@ def test_reviewer_can_calibrate_but_cannot_edit_project_assets(tmp_path):
 
 
 @pytest.mark.parametrize("role", [Role.REVIEWER, Role.VIEWER])
-def test_read_only_role_can_reopen_project_after_privacy_ack(tmp_path, role):
-    _, repository, owner = role_app(tmp_path, role)
+def test_read_only_role_can_reopen_project_after_privacy_ack(tmp_path, role, monkeypatch):
+    _, repository, owner = role_app(monkeypatch, tmp_path, role)
     app = AppTest.from_file(config.ROOT_DIR / "app.py").run(timeout=30)
     assert app.session_state["project_id"] is None
     app.radio(key="navigation").set_value("Prepare").run(timeout=30)

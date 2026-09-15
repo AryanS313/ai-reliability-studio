@@ -1,14 +1,16 @@
-# Design-partner beta: local release review
+# Design-partner beta: release review
 
-**16 September 2026 · Local changes only · Baseline `feature` at `d2fb73e`**
+**16 September 2026 · Integrated release verification in progress · Original baseline `feature` at `d2fb73e`**
 
 ## Decision and scope
 
-**The local beta candidate is ready for owner review and a controlled, trusted-computer pilot. It is not yet validated with an independent design partner.** The remaining acceptance evidence requires an approved real assistant, credentials supplied privately, independent domain reviewers, and first-time users. Local code and synthetic fixtures cannot establish those outcomes.
+**The owner has authorized committing, pushing, merging and updating the live application.** Integration combines the locally tested product improvements with the newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). The combined candidate's final tests, build, remote CI and deployed-origin verification are still being completed. This document does not mark those steps passed before their results are recorded.
 
-No commit, push, merge, deployment, publication, or GitHub modification was performed. The existing Python 3.9 environment was preserved as `.venv-py39-backup`; the supported working environment is Python 3.12.14. Existing data and other worktrees were preserved. Verification fixtures, logs, copied baseline source and disposable infrastructure are ignored under `.local-verification/`.
+The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Section 12 records the integrated scope and outstanding release checks. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
 
-**Branch caveat:** the requested local `feature` checkout was clean but older than the deployed application and `main`. The live landing page was inspected read-only and already describes a different saved-answer/session-private workflow. This work updates the requested local branch; it does not overwrite or certify the live revision. Reviewed scoring/provider fixes available in the local `origin/main` history were selectively reused and tested. Before any later approved integration, compare against current main and preserve its newer work. No inference of live cross-visitor exposure is made from the older local default.
+The obsolete Python 3.9 environment was preserved as `.venv-py39-backup`; the supported native environment is Python 3.12.14. Existing data and unrelated worktrees are preserved. The integration checkout is `/Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio-release`; the original checkout remains available. Verification fixtures, logs and disposable infrastructure stay outside committed application inputs.
+
+**Baseline distinction:** the originally requested local `feature` branch was older than both main and the deployed browser app. Its historical shared-single-user default is not evidence that the newer live browser exposed visitors to one another. The integrated release preserves main's saved-answer provenance, private browser storage, provider-native instructions, source extraction and runtime boundaries while adding the guided 32-case review and stronger safeguards.
 
 ## 1. Primary ICP and product thesis
 
@@ -24,7 +26,7 @@ No commit, push, merge, deployment, publication, or GitHub modification was perf
 
 The [product brief](product-brief.md) covers the ten audience questions, alternatives, research citations, differentiation, non-goals and release boundary. The [discovery plan](discovery-plan.md) contains recruitment, unassisted tasks and a two-release pilot. There are no fabricated interviews, customers, savings, testimonials, usage or willingness-to-pay claims. The résumé was read solely for secondary ownership context; product choices were grounded in users, evidence and risk.
 
-## 2. Before versus after
+## 2. Before versus after — pre-integration local phase
 
 The [25-gap matrix](gap-matrix.md) records every requested prioritization field: user need, baseline, evidence, severity, frequency hypothesis, trust impact, effort, priority, solution and acceptance criterion.
 
@@ -42,7 +44,7 @@ The [25-gap matrix](gap-matrix.md) records every requested prioritization field:
 | Interpretation | Technical pages and score-heavy output | Counts, first finding, expected/observed/source, severity, next action and missing evidence |
 | Return workflow | Saved inputs difficult to restore | Reopen project, retain baseline, compare releases, record decision and export evidence |
 | Analytics | No product event contract | Strict local event schema, no content or credentials; no external collector |
-| Engineering checks | 145 pass, 4 PostgreSQL skips, 76.96% coverage | 490 pass, zero skips, 84.92% coverage including disposable PostgreSQL |
+| Engineering checks | 145 pass, 4 PostgreSQL skips, 76.96% coverage | 573 pass, zero skips, 85.71% coverage after the plain-language follow-up; pre-integration result |
 
 Timing is **one automated observation per path**, on the same local machine using supported Python and the current Streamlit runtime. It excludes installation, human thinking and partner integration. Frozen baseline AppTest was run from an archived pre-change tree. Neither 1/1 functional completion nor navigation count establishes human completion rate, comprehension or cognitive load. Independent baseline/after user measures remain unmeasured. Browser duplicate recovery and missing-key recovery were observed; human recovery time remains unmeasured.
 
@@ -127,9 +129,9 @@ Events are stored in the authorized workspace audit log with a random journey ID
 | Product journey identifier is scrubbed as an auth-session secret | Distinct journey schema key; strict event schema/correlation tests without weakening redaction |
 | Dataset coverage hides warnings; reason lookup reads wrong schema path | Visible sparse-category warning, detailed expander and recorded reference-reason tests |
 
-See the [security audit](security-review.md), [workflow audit](workflow-audit.md), [provider verification](provider-verification.md) and test files for focused findings. The final integrated run below supersedes earlier focused counts.
+See the [security audit](security-review.md), [workflow audit](workflow-audit.md), [provider verification](provider-verification.md) and test files for focused findings. The pre-integration full run below supersedes focused counts from that phase; it does not cover the later combined release.
 
-## 6. Final verification
+## 6. Historical verification — before integrating main
 
 | Check | Result and practical limit |
 |---|---|
@@ -140,7 +142,7 @@ See the [security audit](security-review.md), [workflow audit](workflow-audit.md
 | Ruff and formatting | Pass; **81 Python files** formatted/checkable |
 | Mypy | Pass; **39 source files** |
 | Dependencies | `pip check`: no broken requirements. `pip-audit --strict`: no known vulnerabilities at audit time. Initial audit had 130 advisory entries across six packages, including duplicate advisory IDs; these were not 130 distinct CVEs. |
-| Git diff | `git diff --check` pass; no commits or remote changes |
+| Git diff | `git diff --check` passed in the local-only phase; publication is now authorized and tracked separately |
 | PostgreSQL | Disposable native PostgreSQL 16.2 through private Unix socket; five service tests, including formerly skipped migration/RLS/role tests; shutdown and cleanup successful. Actual managed deployment role/version remains unverified. |
 | Fresh sample | AppTest one action; five documents, 30 chunks, 32 executions; **10 passes, 19 flagged answers, 3 execution errors**; synthetic launch verdict prohibited |
 | Browser first visit/sample | Real in-app browser at 1280 × 720; public and private landing, one-click sample, synthetic disclaimer and inspectable result verified |
@@ -163,9 +165,9 @@ No known failing local critical security/integrity invariant remains in the veri
 1. **Approved actual assistant and access:** supply a read-only staging endpoint, request/response contract, approved cases and scoped credential entered through the local password input or secret environment. Verify its actual HTTPS/TLS/auth/rate-limit behavior and complete a real run. No such account or endpoint was supplied; a local fixture cannot substitute.
 2. **Independent reviewers and first-time users:** recruit qualified engineers/domain owners, adjudicate representative held-out labels, and observe unassisted setup/result teach-back. Demand, evaluator validity, comprehension, recurrence and outcomes cannot be proved by the authoring agent.
 3. **Mobile acceptance:** exercise real narrow viewports and assistive technology using working device/browser controls before claiming responsive/accessibility completion. The available size override did not apply.
-4. **Any hosted rollout:** explicit owner approval, reconcile this older feature branch with current main, and verify the chosen deployment's identity/data/egress boundaries. Live session isolation is not certified by local tests. No push or deployment is authorized.
+4. **Hosted rollout acceptance:** owner authorization is now supplied and integration with main is underway. The exact combined build, CI and final-origin session/data/egress checks must pass before recording the hosted rollout as verified. Local tests do not certify live isolation.
 
-These are explicit blocked claims or deployment gates, not additional hidden engineering work being labeled complete. A controlled local design-partner pilot can collect the missing evidence with approved non-sensitive inputs; do not market it as validated production readiness.
+These remain unverified claims or deployment gates; approval alone does not resolve them. A controlled local design-partner pilot can collect the missing evidence with approved non-sensitive inputs; do not market it as validated production readiness.
 
 ### Design-partner follow-ups
 
@@ -182,7 +184,7 @@ Managed identity/provisioning/revocation and secure proxy ingress; deployed Post
 
 ## 8. Exact local review commands
 
-The ready preview uses a separate local review database, preserving existing workspace data. Open [local review](http://127.0.0.1:8501). To restart it after stopping its process:
+The following commands reproduce the original local review using a separate database. For the integrated checkout, change the directory to `ai-reliability-studio-release` and bootstrap its own supported `.venv` before running. A running preview or final deployment is not implied by these commands:
 
 ```bash
 cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio
@@ -212,7 +214,7 @@ git diff --check
 .venv/bin/python -m pip_audit --strict
 ```
 
-On this machine the ignored verification wrapper starts/stops its own disposable PostgreSQL database and runs the complete suite with no skips:
+The original checkout's ignored verification wrapper starts/stops its own disposable PostgreSQL database. It is a local verification artifact, not a tracked setup dependency:
 
 ```bash
 .venv/bin/python .local-verification/run_postgres_verification.py -q
@@ -220,7 +222,7 @@ On this machine the ignored verification wrapper starts/stops its own disposable
 
 For portable PostgreSQL verification, follow [deployment instructions](../DEPLOYMENT.md#verification-and-ci), using only a disposable test database and explicit reset flag. A normal pytest without the service URL intentionally skips PostgreSQL tests.
 
-## 9. Candid ratings
+## 9. Candid ratings — pre-integration owner-review assessment
 
 Subjective owner-review assessments on a 10-point scale, not customer ratings or measured outcomes.
 
@@ -238,7 +240,7 @@ Subjective owner-review assessments on a 10-point scale, not customer ratings or
 
 Do not raise portfolio claims using synthetic runs, test counts or this agent's activity. Stronger evidence will be real discovery decisions, confirmed partner findings, repeated releases and observed outcomes.
 
-## 10. Suggested commit plan — not executed
+## 10. Commit grouping for the authorized release
 
 Review and stage logical hunks; several concerns share `app.py` and tests. Do not stage ignored databases, verification logs, environments or secrets.
 
@@ -248,9 +250,9 @@ Review and stage logical hunks; several concerns share `app.py` and tests. Do no
 4. **Guided release workflow:** six-step UI, project/input restoration, connection/preflight, decision summary and browser/AppTest regressions.
 5. **Product measurement and handoff:** privacy-safe event schema, ICP/research/discovery, metrics, gap matrix and documentation.
 
-Before an approved push, rebase/integrate carefully against the actual current main, rerun tests on that combined state, review credential exclusions and obtain the user's explicit publication/deployment instruction.
+Publication/deployment authorization has been supplied. Complete integration against current main, rerun checks on the combined state, inspect staged credential/artifact exclusions and preserve the reviewed release evidence before publishing.
 
-## 11. Plain-language follow-up
+## 11. Plain-language follow-up — pre-integration history
 
 The owner requested an intuitive sample and custom workflow without exposed JSON, opaque versions or technical evidence fields. The implementation now:
 
@@ -262,8 +264,40 @@ The owner requested an intuitive sample and custom workflow without exposed JSON
 - Makes a human-readable HTML report the primary download, with exact machine evidence available through optional engineer exports. Report metadata is escaped and non-executable; redaction tests remain enforced.
 - Fixes an additional comparison defect: grouped rows now receive the verdict for the correct candidate, and unknown model/cost data cannot silently disappear or become zero.
 
-Verification after this follow-up: **573 tests passed with no skips**, **85.71%** source branch coverage, Ruff/format/mypy/diff checks passed, `pip check` passed, and the pinned dependency audit found no known vulnerabilities. This supersedes the earlier 490-test local result; the original baseline remains unchanged. Tests include hidden-field round trips, actual editor submission/persistence, plain-language screen checks, missing measurements, candidate/verdict alignment, connection import safeguards and HTML policy/redaction integrity.
+Historical verification after this follow-up, before integrating main: **573 tests passed with no skips**, **85.71%** source branch coverage, Ruff/format/mypy/diff checks passed, `pip check` passed, and the pinned dependency audit found no known vulnerabilities. This supersedes the earlier 490-test local result; the original baseline remains unchanged. Tests include hidden-field round trips, actual editor submission/persistence, plain-language screen checks, missing measurements, candidate/verdict alignment, connection import safeguards and HTML policy/redaction integrity.
 
-The fresh in-app browser sample still produces 32 fictional executions, 19 flagged answers and 3 execution errors with no launch verdict. A narrow browser panel exposed clipped release-check explanations; replacing that grid with wrapping text fixes the observed reading problem. This is a narrow-panel spot check, not a verified mobile-device or complete accessibility audit. Independent first-time-user comprehension, real partner connectivity and adoption remain unvalidated. Changes are local and uncommitted.
+The fresh in-app browser sample still produces 32 fictional executions, 19 flagged answers and 3 execution errors with no launch verdict. A narrow browser panel exposed clipped release-check explanations; replacing that grid with wrapping text fixes the observed reading problem. This is a narrow-panel spot check, not a verified mobile-device or complete accessibility audit. Independent first-time-user comprehension, real partner connectivity and adoption remain unvalidated. At that observation point, changes were local and uncommitted; the owner subsequently authorized the integrated release.
 
 Follow-up artifacts: [presentation audit and acceptance checklist](plain-language-review.md), ignored `.local-verification/plain-language-full-verification.txt`, `.local-verification/plain-language-review.png` and `.local-verification/plain-language-sample-report.html`.
+
+
+## 12. Integrated browser/native release
+
+### Preserved and combined behavior
+
+- **Primary workflow:** Start, Prepare, Connect, Evaluate, Review and History; one action runs all 32 fictional cases and opens readable findings. The three-answer saved example remains under the Start expander and saved-answer review is an advanced tool.
+- **Saved answers:** upload approved sources/questions/answers, record an explicit attributed review, compare replacement answers and download/restore the complete workspace. Primary screens use file inputs and forms, without raw JSON text editing. Automatic findings never substitute for a review; changed answer/question/source versions invalidate incompatible reviews.
+- **Source fidelity:** source text, DOCX table/paragraph order, available location information and extraction warnings remain inspectable. A partially extracted file is not silently treated as complete evidence.
+- **Runtime boundaries:** native `public-demo` is anonymous/sample-only; actual WebAssembly `browser` mode permits approved tab-local custom review and explicit session-key provider calls; trusted `local` persists on the operator's computer; shared `authenticated` hosting needs verified infrastructure. A forged native browser mode and unknown modes fail closed.
+- **Provider integration:** preserve provider-native system instructions, normalized role trace, actual response identity/usage, Gemini thinking-token accounting, bounded Retry-After handling, official destinations/no ambient routing and credential-echo rejection. Browser transport remains sequential/nonstreaming through restricted workers; native HTTP uses its separate destination safeguards.
+- **Lifecycle:** reset closes only the current in-memory repository and clears reviews/keys; another visitor remains intact. Local resets retain authorized identity/audit history. Browser reload/inactivity loss is disclosed, and resume files are explicitly private original-content downloads.
+- **UI compatibility:** readable presentation and evidence semantics must work under both the native Streamlit version and the browser's embedded Streamlit 1.41.0. The retained distribution is Stlite 0.76.0 / Pyodide 0.26.4; native Python verification is 3.12.14.
+
+### Observed integrated verification
+
+| Boundary | Observed result and limit |
+|---|---|
+| Combined native unit/integration/UI and PostgreSQL suite | **1,061 passed, zero skipped**, 33 warnings, 96.95 seconds; **87.86% branch-enabled source coverage**. The 70% gate remains unchanged. `app.py` is exercised through UI tests but is outside the source coverage denominator. |
+| Native static/dependency checks | Ruff, formatting, mypy, `pip check` and `pip-audit --strict` passed on Python 3.12.14. The native audit reported no known vulnerabilities at that check; it does not cover the browser bundle. |
+| Web wrapper | npm lint, TypeScript checking, build and audit passed; npm audit reported **zero findings**. |
+| Reconstructed browser Python inventory | Compatible pure-Python patches are included. Audit of **69 packages** retains **44 advisory entries** across cryptography (11), lxml (2), Pillow (29) and scikit-learn (2). These are advisory records, not a count of distinct CVEs or proven reachable defects. See the [scoped dependency review](browser-dependency-review.md); this is not a clean browser audit. |
+| Actual WebAssembly dependency tests | **11 passed in 4.30 seconds**, one pandas/PyArrow deprecation warning, using Node 24.14.0 with the assembled Pyodide 0.26.4 / Python 3.12.1 runtime. `sys.platform` was `emscripten`; this was not native Python with a simulated platform. |
+| Protobuf implementation | Loaded **5.29.6, pure-Python backend** from site-packages; no provider protobuf namespace or loaded `google._upb`. Protobuf Struct and Streamlit 1.41.0 ForwardMsg round trips passed. |
+| Local browser UI | Browser boot and reload worked. The primary sample completed **32 fictional executions**, opened a readable decision view without exposed JSON, and retained its **three intended simulated infrastructure errors**. Those fixture errors are expected evidence, not failed application execution. Narrow-layout copy refinement is still being finalized. |
+| Remote CI and publication | Authorized, but remote CI results, commit/merge identifiers and publication completion remain **pending** until observed and recorded. |
+| Final hosted origin | **Pending** verification of the exact published revision: startup/isolation, sample, custom saved-answer/replacement/resume, credentials/reset and independent sessions. Local browser and Node/Wasm checks do not establish final-origin CORS or live controls. |
+| Real assistant/account, independent domain labels, first-time-user comprehension and adoption | Remain unvalidated; no customer or real-provider outcomes are inferred from fixtures. |
+
+The ignored `.local-verification/final-merged-*` logs record the combined native checks. The WebAssembly harness and exact inputs/results are under `.local-verification/wasm-reachability/`; it verified 50 runtime files byte-for-byte, recorded test/dependency hashes and made no network calls. Its test-module SHA-256 is `47ecdc96fe75f3f75c1b7d6e1d84f653d7e21f57a2c09416e45beb2fba959eee`. The [dependency review](browser-dependency-review.md#observed-webassembly-verification) records relevant application-module fingerprints. This evidence identifies the tested dependency paths and does **not** assert that a later final application source bundle has the same hash.
+
+After the pending presentation refinement, verify the affected workflow and record the final deployed source/revision identifiers. Successful builds and these scoped checks do not establish real-provider access, full mobile/accessibility acceptance, absence of all dependency vulnerabilities or enterprise production readiness.

@@ -16,6 +16,7 @@ branch = true
 omit = ["src/cli.py"]
 
 [tool.ruff]
+extend-exclude = ["browser_site/.build", "browser_site/public/assets/studio", "browser_runtime/dependencies/cache"]
 line-length = 120
 target-version = "py311"
 

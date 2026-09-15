@@ -79,7 +79,8 @@ def test_secret_reference_cannot_extract_an_arbitrary_server_environment_variabl
 def test_health_check_does_not_claim_success_without_a_real_check():
     target = ExternalHTTPTarget(ExternalTargetConfig(name="Assistant", endpoint="https://example.test/chat"))
     result = target.health_check()
-    assert result.status == ExecutionStatus.INVALID_RESPONSE
+    assert result.status == ExecutionStatus.PENDING
+    assert result.metadata == {"health": "not_checked", "network_checked": False}
     assert result.error_code == "health_check_not_configured"
 
 
@@ -95,48 +96,28 @@ def test_health_checks_apply_dns_safety_before_sending_credentials(monkeypatch):
 
 
 def test_real_transport_pins_a_validated_ip_and_keeps_original_hostname(monkeypatch):
-    captured = {}
+    from test_public_target_network import offline_sockets
+
     dns_calls = []
 
     def resolve(*args, **kwargs):
         dns_calls.append(args)
         return [(2, 1, 6, "", ("93.184.216.34", 443))]
 
-    class Response:
-        status = 200
-
-        def read(self, size):
-            return json.dumps({"answer": "Supported"}).encode()
-
-        def close(self):
-            captured["response_closed"] = True
-
-    class Connection:
-        def __init__(self, host, port, address, timeout):
-            captured.update(host=host, port=port, address=address)
-
-        def request(self, method, path, body, headers):
-            captured.update(method=method, path=path, headers=headers)
-
-        def getresponse(self):
-            return Response()
-
-        def close(self):
-            captured["connection_closed"] = True
-
     monkeypatch.setattr("src.targets.socket.getaddrinfo", resolve)
-    monkeypatch.setattr("src.targets._PinnedHTTPSConnection", Connection)
     monkeypatch.setenv("HTTPS_PROXY", "https://malicious.example")
+    sockets, tls = offline_sockets(monkeypatch)
     target = ExternalHTTPTarget(ExternalTargetConfig(name="Assistant", endpoint="https://example.test/chat"))
     assert target.execute({"question": "hello"}).status == ExecutionStatus.PASSED
     assert len(dns_calls) == 1
-    assert captured["host"] == "example.test"
-    assert captured["address"] == "93.184.216.34"
-    assert captured["headers"]["Host"] == "example.test"
-    assert captured["response_closed"] and captured["connection_closed"]
+    assert len(sockets) == 1 and sockets[0].connected == ("93.184.216.34", 443)
+    assert b"Host: example.test" in sockets[0].sent
+    assert tls[0][2] == "example.test"
+    assert sockets[0].closed
 
 
 def test_public_demo_refuses_external_execution_and_health_before_network(monkeypatch):
+    monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ("example.test",))
     monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
     monkeypatch.setattr("src.targets.socket.getaddrinfo", lambda *args, **kwargs: pytest.fail("No public-demo DNS"))
     target = ExternalHTTPTarget(

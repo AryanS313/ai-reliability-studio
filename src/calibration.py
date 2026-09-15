@@ -204,11 +204,38 @@ def uncalibrated_status(thresholds: EvaluatorThresholdConfiguration | None = Non
         "status": "insufficiently_calibrated",
         "reviewed_cases": 0,
         "threshold_version": thresholds.version,
+        "evaluator_version": EVALUATOR_VERSION,
+        "label_semantics_version": LABEL_SEMANTICS_VERSION,
         "limitations": ["No held-out human-labelled calibration result was attached to this run."],
         "statistical_claim": "No statistical confidence claim is available.",
     }
     payload["calibration_version"] = version_hash(payload)
     return payload
+
+
+def validate_calibration_for_run(
+    result: dict[str, Any],
+    thresholds: EvaluatorThresholdConfiguration,
+    *,
+    evaluator_version: str,
+    label_semantics_version: str,
+) -> None:
+    """Reject stale or changed qualifying evidence before executing a target.
+
+    The content hash binds the result, including its evaluator and label versions.
+    It is an integrity check, not authentication of the reviewer or their labels.
+    """
+    if result.get("threshold_version") != thresholds.version:
+        raise ValueError("Calibration result threshold version does not match this run's threshold configuration.")
+    if result.get("status") != "calibrated":
+        return
+    if result.get("evaluator_version") != evaluator_version:
+        raise ValueError("Calibration result evaluator version is missing or does not match this run's evaluator.")
+    if result.get("label_semantics_version") != label_semantics_version:
+        raise ValueError("Calibration result label-semantics version is missing or does not match this run.")
+    content = {key: value for key, value in result.items() if key not in {"calibration_version", "calibration_id"}}
+    if not result.get("calibration_version") or version_hash(content) != result["calibration_version"]:
+        raise ValueError("Calibration result content hash is missing or does not match its version-bound evidence.")
 
 
 def run_calibration_workflow(

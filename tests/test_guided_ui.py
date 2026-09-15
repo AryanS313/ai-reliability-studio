@@ -1,0 +1,401 @@
+from __future__ import annotations
+
+import json
+import socket
+from copy import deepcopy
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+from streamlit.testing.v1 import AppTest
+
+from src import config, database
+from src.saved_responses import compare_response_reviews
+from src.ui_workflows import evaluate_review_workspace, read_review_workspace, sample_review_workspace
+
+
+def prepare_private_project(app):
+    session = app.session_state["_studio_private_session"]
+    project = {"name": "Guided review fixture"}
+    project_id = session.repository.create_project(session.context, project)
+    app.session_state["project_id"] = project_id
+    app.session_state["project"] = project
+    app.session_state["privacy_acknowledged"] = True
+    app.run(timeout=30)
+    assert not app.exception
+
+
+def navigate(app, page):
+    aliases = {
+        "Overview": "Start",
+        "Project Setup": "Prepare",
+        "Target Setup": "Connect",
+        "Run Evaluation": "Evaluate",
+        "Results Dashboard": "Review",
+        "Run History / Comparison": "History",
+    }
+    if page in aliases:
+        return app.radio(key="navigation").set_value(aliases[page]).run(timeout=30)
+    return app.selectbox(key="advanced_tool").set_value(page).run(timeout=30)
+
+
+@pytest.fixture
+def private_ui(monkeypatch):
+    monkeypatch.setattr(config, "AUTH_MODE", "public-session")
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "browser")
+    monkeypatch.setattr(config, "is_browser_runtime", lambda: True)
+    monkeypatch.setattr(config, "browser_runtime_enabled", lambda: True)
+    monkeypatch.setattr(config, "APP_ENV", "development")
+    monkeypatch.setattr(config, "PUBLIC_SESSION_TTL_SECONDS", 3600)
+    monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ())
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("Guided UI checks must not contact a provider or the network")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file", lambda path: False if path.name in {"secrets.toml", ".env"} else original_is_file(path)
+    )
+    database.clear_request()
+    apps = []
+
+    def create():
+        app = AppTest.from_file(config.ROOT_DIR / "app.py").run(timeout=30)
+        assert not app.exception
+        apps.append(app)
+        prepare_private_project(app)
+        return app
+
+    yield create
+    for app in apps:
+        if "_studio_private_session" in app.session_state:
+            app.session_state["_studio_private_session"].close()
+    database.clear_request()
+
+
+def save_visible_review(app, decision, note):
+    next(widget for widget in app.selectbox if widget.label == "Decision").set_value(decision)
+    next(widget for widget in app.text_area if widget.label == "What in the source supports your decision?").set_value(
+        note
+    )
+    next(widget for widget in app.text_input if widget.label == "Reviewer name").set_value("UI test reviewer")
+    next(widget for widget in app.selectbox if widget.label == "Review method").set_value("Reviewed with AI assistance")
+    next(widget for widget in app.checkbox if widget.label.startswith("I checked this answer")).check()
+    next(widget for widget in app.button if widget.label == "Save review and continue").click().run(timeout=30)
+    assert not app.exception
+
+
+def test_primary_sample_uses_browser_compatible_single_execution_policy(private_ui, monkeypatch):
+    from src import evaluator
+
+    run_evaluation = evaluator.run_evaluation
+    observed_concurrency = []
+
+    def checked_run(*args, **kwargs):
+        # The browser adapter rejects a native default of four. Assert the
+        # application's explicit choice, then run the actual sample evaluator.
+        observed_concurrency.append(kwargs.get("max_concurrency"))
+        assert kwargs.get("max_concurrency") == 1
+        return run_evaluation(*args, **kwargs)
+
+    monkeypatch.setattr(evaluator, "run_evaluation", checked_run)
+    app = private_ui()
+    next(button for button in app.button if button.label == "Try the sample review").click().run(timeout=30)
+    assert not app.exception
+    assert observed_concurrency == [1]
+    results = app.session_state["last_results"]
+    assert len(results) == 32
+    assert results["target_type"].eq("synthetic_mock").all()
+    assert results["manifest"].map(lambda value: value["target"]["execution_policy"]["max_concurrency"]).eq(1).all()
+    assert any("no launch verdict" in warning.value for warning in app.warning)
+    assert next(metric for metric in app.metric if metric.label == "Execution errors").value == "3"
+    assert any(
+        "3 simulated connection failures are included in this sample" in error.value
+        and "excluded from quality averages" in error.value
+        and "No external calls were made" in error.value
+        for error in app.error
+    )
+    assert all("Fix connection or provider errors" not in error.value for error in app.error)
+
+
+def test_sample_can_be_reviewed_and_retested_without_provider_calls(private_ui):
+    app = private_ui()
+    assert {"Try a saved-answer example", "Review saved answers", "Evaluate live assistant"}.issubset(
+        {button.label for button in app.button}
+    )
+    app.button(key="start_saved_sample").click().run(timeout=30)
+    assert not app.exception
+    assert app.session_state["offline_baseline"]["review_status"].eq("pending").all()
+    assert app.session_state["offline_baseline"]["review_decision"].isna().all()
+    next(button for button in app.button if button.label == "Save review and continue").click().run(timeout=30)
+    assert app.session_state["offline_baseline"]["review_status"].eq("pending").all()
+    assert any("Choose a decision" in warning.value for warning in app.warning)
+    save_visible_review(
+        app, "Supported by the sources", "The export passage states 24 hours, matching the answer and its citation."
+    )
+    assert (
+        next(widget for widget in app.text_area if widget.label == "What in the source supports your decision?").value
+        == ""
+    )
+    next(widget for widget in app.selectbox if widget.label == "Decision").set_value("Needs a fix")
+    next(widget for widget in app.checkbox if widget.label.startswith("I checked this answer")).check()
+    next(button for button in app.button if button.label == "Save review and continue").click().run(timeout=30)
+    assert app.session_state["offline_baseline"]["review_status"].eq("reviewed").sum() == 1
+    assert any("Choose a decision" in warning.value for warning in app.warning)
+    save_visible_review(app, "Needs a fix", "The answer states 48 hours while the export passage states 24 hours.")
+    assert any("Expected routing: security · high" in caption.value for caption in app.caption)
+    assert any("Returned action: escalate to operations; urgency normal." in text.value for text in app.markdown)
+    save_visible_review(
+        app,
+        "Needs a fix",
+        "The returned action uses operations and normal urgency; the source requires security and high.",
+    )
+    baseline = app.session_state["offline_baseline"]
+    assert baseline["review_status"].eq("reviewed").all()
+    assert baseline["reviewer_kind"].eq("ai_assisted").all()
+    assert baseline["review_decision"].tolist() == ["supported", "failed", "failed"]
+    app.button(key="sample_replacements").click().run(timeout=30)
+    assert not app.exception
+    assert app.session_state["offline_candidate"]["review_status"].eq("pending").all()
+    pending_comparison = compare_response_reviews(baseline, app.session_state["offline_candidate"])
+    assert pending_comparison["counts"] == {"pending_review": 2}
+    save_visible_review(
+        app, "Supported by the sources", "The replacement now states the 24-hour limit in the export passage."
+    )
+    save_visible_review(
+        app, "Supported by the sources", "The replacement action now uses security with high urgency as required."
+    )
+    comparison = compare_response_reviews(baseline, app.session_state["offline_candidate"])
+    assert comparison["counts"] == {"resolved": 2}
+    assert comparison["baseline_case_count"] == 3 and comparison["candidate_case_count"] == 2
+    assert len(app.get("download_button")) >= 5
+    exported = json.dumps(app.session_state["offline_workspace"]).encode()
+    restored = read_review_workspace(exported)
+    restored_baseline = evaluate_review_workspace(restored)
+    restored_candidate = evaluate_review_workspace(restored, "candidate")
+    assert restored_baseline["review_status"].eq("reviewed").all()
+    assert compare_response_reviews(restored_baseline, restored_candidate)["counts"] == {"resolved": 2}
+
+
+def test_uploaded_inputs_import_and_mismatch_is_explained(private_ui, monkeypatch):
+    import streamlit as st
+
+    app = private_ui()
+    app.button(key="start_saved").click().run(timeout=30)
+    sample = sample_review_workspace()
+    answers = list(sample["baseline"]["responses"][:-1])
+    original_uploader = st.file_uploader
+
+    def file(name, content):
+        value = BytesIO(json.dumps(content).encode())
+        value.name = name
+        return value
+
+    def uploaded(*args, **kwargs):
+        key = kwargs.get("key")
+        if key == "saved_sources_upload":
+            return [file("sources.json", sample["sources"])]
+        if key == "saved_questions_upload":
+            return file("questions.json", sample["dataset"])
+        if key == "saved_answers_upload":
+            return file("answers.json", answers)
+        return original_uploader(*args, **kwargs)
+
+    from streamlit.delta_generator import DeltaGenerator
+
+    monkeypatch.setattr(st, "file_uploader", uploaded)
+    monkeypatch.setattr(DeltaGenerator, "file_uploader", lambda self, *args, **kwargs: uploaded(*args, **kwargs))
+    app.run(timeout=30)
+    app.text_input(key="saved_target_name").set_value("Local fixture import")
+    app.text_input(key="saved_target_version").set_value("fixture-v1")
+    app.text_input(key="saved_captured_at").set_value("2026-01-01T12:00:00+00:00")
+    next(b for b in app.button if b.label == "Import answers").click().run(timeout=30)
+    assert not app.exception
+    assert app.error
+    assert any("missing" in item.value.lower() for item in app.caption)
+    answers[:] = sample["baseline"]["responses"]
+    next(b for b in app.button if b.label == "Import answers").click().run(timeout=30)
+    assert not app.exception
+    frame = app.session_state["offline_baseline"]
+    assert len(frame) == 3 and frame["review_status"].eq("pending").all()
+    assert frame["client_retrieval_status"].eq("not_measured").all()
+    assert frame["latency_ms"].isna().all() and frame["estimated_cost"].isna().all()
+    assert not app.get("json")
+
+
+def test_live_path_keeps_existing_tools_and_never_defaults_to_synthetic(private_ui):
+    app = private_ui()
+    app.button(key="start_live").click().run(timeout=30)
+    assert not app.exception
+    assert next(button for button in app.button if button.label == "Next: questions").disabled
+    app.radio(key="live_step").set_value("3. Connect and run").run(timeout=30)
+    assert not app.exception
+    target = next(widget for widget in app.radio if widget.label == "Evaluation target")
+    assert "Synthetic demonstration" not in target.options
+    assert next(button for button in app.button if button.label == "Run Evaluation").disabled
+    assert any("browser" in info.value.lower() or "model provider" in info.value for info in app.info)
+    assert {"Evaluator Calibration", "Prompt Comparison", "Run History / Comparison", "Settings / Export"}.issubset(
+        set(app.selectbox(key="advanced_tool").options) | {"Run History / Comparison"}
+    )
+    navigate(app, "Target Setup")
+    assert not app.exception
+    assert any("browser" in info.value.lower() or "model provider" in info.value for info in app.info)
+    assert not any(button.label == "Check connection" for button in app.button)
+
+
+def test_saved_review_keeps_source_extraction_notice_visible_and_in_reports(private_ui):
+    from src.reporting import json_report
+
+    app = private_ui()
+    app.button(key="start_saved_sample").click().run(timeout=30)
+    workspace = deepcopy(app.session_state["offline_workspace"])
+    warning = "policy.pdf: Page 2 contains no searchable text. Check the original document."
+    workspace["sources"][0].update(extraction_warnings=[warning], partially_extracted=True)
+    frame = evaluate_review_workspace(workspace)
+    app.session_state["offline_workspace"] = workspace
+    app.session_state["offline_baseline"] = frame
+    app.run(timeout=30)
+    assert not app.exception
+    assert any("source content needs an extraction check" in widget.value for widget in app.warning)
+    assert any(warning in widget.value for widget in app.text)
+    payload = json.loads(json_report(frame))
+    assert payload["metadata"]["source_extraction_notices"] == [warning]
+    assert any("Check the original documents" in item for item in payload["metadata"]["limitations"])
+
+
+def test_public_settings_ignore_server_credentials_and_end_session_clears_ui(private_ui, monkeypatch):
+    def forbidden_server_key(provider):
+        raise AssertionError("The public UI must not inspect or use server credentials")
+
+    monkeypatch.setattr(config, "api_key_for_provider", forbidden_server_key)
+    app = private_ui()
+    app.button(key="start_saved_sample").click().run(timeout=30)
+    navigate(app, "Settings / Export")
+    assert not app.exception
+    assert not app.exception
+    assert not any(".env key" in item.value for item in app.caption)
+    next(button for button in app.button if button.label == "End session and clear my data").click().run(timeout=30)
+    assert not app.exception
+    assert app.session_state.get("offline_workspace") is None
+    assert app.session_state["last_results"].empty
+    assert all(not value for value in app.session_state["provider_api_keys"].values())
+    prepare_private_project(app)
+    app.button(key="start_resume").click().run(timeout=30)
+    assert not app.exception
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    assert next(button for button in app.button if button.label == "Resume review").disabled
+
+
+def test_home_resume_panel_remains_open_across_reruns_until_leaving_flow(private_ui):
+    app = private_ui()
+    app.button(key="start_resume").click().run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    # An upload triggers a full rerun. Rendering the panel must not consume its state.
+    app.run(timeout=30)
+    assert not app.exception
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    assert app.session_state["_show_resume_workspace"] is True
+    navigate(app, "Overview")
+    assert "_show_resume_workspace" not in app.session_state
+    app.button(key="start_saved").click().run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and not widget.proto.expanded for widget in app.expander)
+
+
+@pytest.mark.parametrize("valid", [False, True])
+@pytest.mark.parametrize("existing", [False, True])
+def test_resume_upload_keeps_panel_open_until_successful_restore(private_ui, monkeypatch, valid, existing):
+    import streamlit as st
+
+    app = private_ui()
+    if existing:
+        app.button(key="start_saved_sample").click().run(timeout=30)
+        previous = deepcopy(app.session_state["offline_workspace"])
+        app.button(key="return_to_start").click().run(timeout=30)
+    app.button(key="start_resume").click().run(timeout=30)
+    if existing:
+        assert app.session_state["offline_workspace"] == previous
+        assert any(button.key == "cancel_resume" for button in app.button)
+    incoming = sample_review_workspace()
+    incoming["target_name"] = "Restored workspace fixture"
+    uploaded = BytesIO(json.dumps(incoming if valid else {}).encode())
+    original_uploader = st.file_uploader
+
+    def uploaded_workspace(*args, **kwargs):
+        if kwargs.get("key") == "resume_saved_workspace":
+            return uploaded
+        return original_uploader(*args, **kwargs)
+
+    # AppTest has no upload interaction; supply the uploader's returned bytes and
+    # exercise the same full app rerun and actual Resume review button callback.
+    monkeypatch.setattr(st, "file_uploader", uploaded_workspace)
+    app.run(timeout=30)
+    assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+    resume = next(button for button in app.button if button.label == "Resume review")
+    assert not resume.disabled
+    resume.click().run(timeout=30)
+    assert not app.exception
+    if valid:
+        assert "_show_resume_workspace" not in app.session_state
+        assert len(app.session_state["offline_baseline"]) == 3
+        assert app.session_state["offline_workspace"]["target_name"] == incoming["target_name"]
+        assert any("Workspace restored" in message.value for message in app.success)
+    else:
+        assert app.session_state["_show_resume_workspace"] is True
+        assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
+        assert any("restore this workspace" in error.value for error in app.error)
+        if existing:
+            assert app.session_state["offline_workspace"] == previous
+            app.button(key="cancel_resume").click().run(timeout=30)
+            assert not app.exception
+            assert "_show_resume_workspace" not in app.session_state
+            assert app.session_state["offline_workspace"] == previous
+            assert len(app.get("download_button")) >= 4
+
+
+def test_resume_refuses_stale_reviews_and_unknown_replacement_cases():
+    sample = sample_review_workspace()
+    baseline = evaluate_review_workspace(sample)
+    row = baseline.iloc[0].to_dict()
+    bad_review = {key: row[key] for key in ("case_id", "response_hash", "case_version", "knowledge_base_version")}
+    bad_review.update(
+        decision="supported",
+        reviewer="Fixture reviewer",
+        reviewer_kind="ai_assisted",
+        note="Fixture check",
+        response_hash="stale",
+    )
+    sample["baseline"]["reviews"] = [bad_review]
+    with pytest.raises(ValueError, match="response_hash"):
+        evaluate_review_workspace(read_review_workspace(json.dumps(sample).encode()))
+    another = deepcopy(sample_review_workspace())
+    another["candidate"] = {
+        "responses": [{"case_id": "not-in-original", "actual_answer": "A"}],
+        "target_version": "v2",
+        "captured_at": "2026-01-01T13:00:00+00:00",
+    }
+    with pytest.raises(ValueError, match="case IDs"):
+        evaluate_review_workspace(another, "candidate")
+
+
+@pytest.mark.parametrize(
+    ("key", "replacement"),
+    [
+        ("baseline", None),
+        ("baseline", []),
+        ("dataset", []),
+        ("dataset", ["bad"]),
+        ("sources", []),
+        ("sources", [{}]),
+        ("candidate", []),
+        ("baseline", {"responses": []}),
+    ],
+)
+def test_resume_rejects_incomplete_workspaces(key, replacement):
+    sample = sample_review_workspace()
+    sample[key] = replacement
+    with pytest.raises(ValueError):
+        read_review_workspace(json.dumps(sample).encode())
+    with pytest.raises(ValueError):
+        evaluate_review_workspace(sample)

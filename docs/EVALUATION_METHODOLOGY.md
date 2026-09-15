@@ -1,5 +1,23 @@
 # Evaluation methodology
 
+Automatic checks are advisory. The saved-answer workflow requires an explicit review before an answer is marked reviewed, even when automatic checks pass. Uncertainty is an outcome, not evidence that an answer is correct. The bundled evaluator does not certify a deployment or claim reliable detection of arbitrary hallucinations.
+
+## Saved answers and review comparisons
+
+From **Start → Review answers you already have**, try the three authored answers or import approved questions, a complete source packet and saved responses with matching case IDs. Custom imports require a saved project and data-handling acknowledgment. The browser and native private app use the same review rules; primary import controls accept files without requiring JSON text editing. The primary 32-case synthetic release review is a separate demonstration.
+
+Client retrieval is not reconstructed by looking up the uploaded sources. The saved-answer evaluator reports reference-source coverage separately; client retrieval, latency and cost stay unknown if they were not supplied. Assistant identity, version and capture time are uploader declarations. A synthetic/authored fixture is explicitly distinguished from client-supplied answers, which still require independent source review.
+
+A review binds the answer hash, question version and knowledge-base version, plus an explanation, reviewer, timestamp and human/AI-assisted attribution. A high automatic score or an import does not supply that review. Replacing an answer invalidates its previous review. Replacement comparisons require compatible questions and sources and report unmatched, unreviewed, inconclusive and execution-error cases explicitly. Resolving a supplied answer does not prove that a deployed assistant was fixed.
+
+Restoring a downloaded workspace recalculates automatic checks under the current evaluator, then restores only reviews compatible with the supplied answer/question/source versions. Reviewer names and timestamps are explicit declarations, not authenticated identities. The resumable workspace preserves original content; it is distinct from a redacted report and must be kept private.
+
+## Source fidelity before scoring
+
+Source content is treated as evidence, not rewritten into a preferred reference answer. Extraction preserves DOCX paragraph/table order, meaningful line breaks and available page/section/table provenance. Mixed or image-only PDFs can have missing text; extraction warnings accompany source records, chunks and reports rather than being replaced with guessed content. Long/chunked sources and table-heavy documents still require spot checks against the original. Inspect notices before interpreting a missing or apparently contradictory passage.
+
+The source packet must include relevant exceptions and the complete policy context. Correctly importing a file does not prove that it is current, authoritative or representative. Changed sources receive new versions so earlier reports and review hashes can be interpreted against the evidence they actually used.
+
 ## Evidence unit
 
 The unit of interpretation is a candidate: one prompt version, exact model, target version, dataset version, document snapshot, retrieval configuration, evaluator configuration, and run environment. Candidates are never pooled for readiness decisions.
@@ -39,6 +57,10 @@ Evidence stores document ID/version, chunk ID, source, page or section, text spa
 ### Citations
 
 Citation assessment separates presence, source validity, claim support, and completeness. Inline citations and structured citations returned by external APIs are accepted. Structured citations must resolve to an exact retrieved chunk or a document/version plus exact location. Mentioning a source title does not demonstrate support.
+
+Citation metadata distinguishes verified support, unresolved semantic support, established unsupported coverage, missing citations and invalid provenance. A resolved citation whose meaning cannot be established receives no citation credit and requires review; uncertainty alone is not an established citation defect. The legacy `supports_claim=false` means verified credit was not earned and must be read with `support_state`. Missing/ambiguous anchors, wrong document versions and established wrong-claim support remain defects even when another claim is uncertain.
+
+Exact citation resolution does not guarantee a correct semantic judgment. Limited grammar and low-overlap paraphrases may still produce false positives or uncertainty; independent review remains necessary.
 
 ### Escalation
 
@@ -99,6 +121,14 @@ Build datasets from real risks and observed failure modes. Include routine cases
 
 Coverage tables are evidence about the dataset—not proof of production representativeness. Review severe and low-confidence cases manually.
 
+## Provider and runtime provenance
+
+Direct execution sends the saved instructions through each provider's native system-instruction field and sends retrieved context/questions as user input. The manifest retains a normalized role-separated trace and versioned transport semantics; it does not pretend that the normalized trace is a byte-for-byte HTTP request. Requested model/configuration and the identity/usage actually returned by the provider remain distinct. Missing reported identity stays unknown.
+
+Provider-specific unsupported sampling options are omitted with explicit requested/effective metadata. Gemini thinking-token counts are preserved from returned usage; a missing usage component is not estimated into a known total. Refusals, empty outputs, authentication errors and failures stay execution outcomes. SDK retries are disabled so the executor owns retry accounting. Safe `Retry-After` handling does not retry earlier than the observed limit. Retry costs can remain incomplete even when final-attempt usage is known.
+
+The browser uses sequential nonstreaming calls through its restricted worker; native transport has a separate bounded HTTP path. A fixture verifies the exercised request/response semantics, not real account access, final-origin CORS or provider reliability. Reproducibility records the actual runtime and dependency/source manifests rather than assuming the browser uses the native lock.
+
 ## Interpreting costs and latency
 
 Costs are estimates from exact model IDs and a versioned pricing table. The estimate records its official source URL, effective date, optional expiry, and staleness warning. Unknown models receive no attributed cost. Promotional rates are explicitly time-bounded. Latency includes the target call as measured by the adapter; deployment network conditions can differ.
@@ -118,3 +148,5 @@ Deterministic text scoring cannot establish every semantic implication. Retrieva
 - Calibration hashes detect changed evidence; they do not authenticate the reviewer or independently prove that a declared held-out split was unseen. Teams must govern this process and review severe and uncertain cases. The regression suite verifies documented behaviors, not broad production accuracy.
 
 The v8 compatibility revision normalizes native `filename`/`document_hash` identities before exact citation validation and distinguishes an assistant authority restriction from a human-review requirement. An echoed runtime credential is withheld and blocks the release even when the response is excluded from quality scoring.
+
+Scoped exemptions are checked against the dimension they waive: a size exemption cannot waive a separate time limit. An abstention such as "I cannot determine this from the supplied evidence" is unverifiable; additional definitive assertions are still assessed. These are tested regression behaviors, not a claim of general semantic accuracy.

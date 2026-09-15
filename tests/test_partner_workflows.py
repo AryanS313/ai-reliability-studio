@@ -32,6 +32,8 @@ def private_app(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "APP_ACCESS_MODE", "local")
     repository = SQLiteRepository(tmp_path / "partner-workflow.sqlite3")
     database.set_repository(repository)
+    # Bind the same explicit test repository inside AppTest's separate thread.
+    monkeypatch.setattr(database, "repository_from_url", lambda: repository)
     app = AppTest.from_file(config.ROOT_DIR / "app.py").run(timeout=30)
     assert not app.exception
     yield app, repository
@@ -148,7 +150,7 @@ def test_public_sample_isolated_between_sessions_and_instrumented_once(tmp_path,
     _find(first.button, "Try the sample review").click().run(timeout=30)
     assert not first.exception
     assert len(first.session_state["last_results"]) == 32
-    first_repository = first.session_state["_demo_repository"]
+    first_repository = first.session_state["_studio_private_session"].repository
     first_context = first.session_state["workspace_context"]
     first_session_id = first.session_state["analytics_session"]
     assert len(first_repository.list_runs(first_context)) == 1
@@ -161,7 +163,12 @@ def test_public_sample_isolated_between_sessions_and_instrumented_once(tmp_path,
     assert second.session_state["analytics_session"] != first_session_id
     assert second.session_state["project_id"] is None
     assert second.session_state["last_results"].empty
-    assert second.session_state["_demo_repository"].list_projects(second.session_state["workspace_context"]) == []
+    assert (
+        second.session_state["_studio_private_session"].repository.list_projects(
+            second.session_state["workspace_context"]
+        )
+        == []
+    )
     _page(second, "Connect")
     assert not second.text_input
     assert not second.get("file_uploader")

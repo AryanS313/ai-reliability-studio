@@ -10,7 +10,12 @@ from typing import Any
 import pandas as pd
 
 from src import config, database
-from src.calibration import EvaluatorThresholdConfiguration, calibration_for_run, uncalibrated_status
+from src.calibration import (
+    EvaluatorThresholdConfiguration,
+    calibration_for_run,
+    uncalibrated_status,
+    validate_calibration_for_run,
+)
 from src.datasets import (
     LEGACY_REQUIRED_FIELDS,
     DatasetValidationException,
@@ -19,6 +24,7 @@ from src.datasets import (
     strict_bool,
     validate_dataset_frame,
 )
+from src.document_loader import source_extraction_warnings
 from src.domain import ExecutionStatus, TargetType
 from src.execution import CancellationToken, ExecutionEngine, ExecutionPolicy
 from src.judges import LLMJudge
@@ -27,6 +33,7 @@ from src.retrieval import retrieval_metrics, retrieve_chunks
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION, score_result
 from src.suggestions import suggestion_for_failure
 from src.targets import (
+    ExternalHTTPTarget,
     FoundationModelConfig,
     FoundationModelTarget,
     MockTargetConfig,
@@ -49,15 +56,15 @@ def read_eval_dataset(filename: str, data: bytes) -> pd.DataFrame:
     suffix = Path(filename).suffix.lower()
     buffer = BytesIO(data)
     if suffix == ".csv":
-        frame = pd.read_csv(buffer)
+        frame = pd.read_csv(buffer, dtype=str, keep_default_na=False)
     elif suffix == ".tsv":
-        frame = pd.read_csv(buffer, sep="\t")
+        frame = pd.read_csv(buffer, sep="\t", dtype=str, keep_default_na=False)
     elif suffix in {".xlsx", ".xls"}:
-        frame = pd.read_excel(buffer)
+        frame = pd.read_excel(buffer, dtype=str, keep_default_na=False)
     elif suffix == ".json":
-        frame = pd.read_json(buffer)
+        frame = pd.read_json(buffer, dtype=False, convert_dates=False)
     elif suffix == ".jsonl":
-        frame = pd.read_json(buffer, lines=True)
+        frame = pd.read_json(buffer, lines=True, dtype=False, convert_dates=False)
     else:
         raise ValueError(f"Unsupported evaluation dataset type: {suffix or 'no extension'}")
     if len(frame) > config.MAX_DATASET_ROWS:
@@ -98,7 +105,7 @@ def run_evaluation(
     target_adapter: TargetAdapter | None = None,
     cancellation_token: CancellationToken | None = None,
     max_concurrency: int = 4,
-    max_retries: int = 2,
+    max_retries: int | None = None,
     metric_weights: dict[str, float] | None = None,
     environment: str | None = None,
     judge_evaluator: LLMJudge | None = None,
@@ -108,9 +115,14 @@ def run_evaluation(
 ) -> pd.DataFrame:
     dataset = normalize_eval_dataset(eval_df)
     threshold_configuration = threshold_configuration or EvaluatorThresholdConfiguration()
-    calibration = calibration_for_run(
-        calibration_result or uncalibrated_status(threshold_configuration), threshold_configuration
+    calibration = calibration_result or uncalibrated_status(threshold_configuration)
+    validate_calibration_for_run(
+        calibration,
+        threshold_configuration,
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
     )
+    calibration = calibration_for_run(calibration, threshold_configuration)
     models = model_name if isinstance(model_name, list) else [model_name]
     vector_store = SimpleVectorStore()
     vector_store.build(chunks)
@@ -143,6 +155,15 @@ def run_evaluation(
 
     for selected_model in models:
         adapter = target_adapter or _adapter_for_model(selected_model, api_key)
+        effective_retries = adapter.default_retry_count if max_retries is None else max_retries
+        if isinstance(adapter, ExternalHTTPTarget):
+            applies_prompt = adapter.sends_system_prompt
+            if len(prompts) > 1 and not applies_prompt:
+                raise ValueError(
+                    "This external target's request template does not send ${system_prompt}. "
+                    "Run one prompt, add the placeholder for an endpoint that accepts it, or compare saved answers "
+                    "from separately deployed assistant versions."
+                )
         target_type = adapter.target_type.value
         target_configuration = _target_storage_configuration(adapter)
         target_version_id = repository.create_target_version(
@@ -201,9 +222,41 @@ def run_evaluation(
                     "case_count": len(dataset),
                     "quality_report": dataset_quality,
                 },
-                documents=[{"version": value} for value in document_versions],
+                documents=[
+                    {
+                        "version": value,
+                        "extraction_notices": source_extraction_warnings(
+                            [
+                                chunk
+                                for chunk in chunks
+                                if str(
+                                    chunk.get("document_hash")
+                                    or chunk.get("document_version")
+                                    or chunk.get("document_id")
+                                    or "legacy"
+                                )
+                                == value
+                            ]
+                        ),
+                    }
+                    for value in document_versions
+                ],
                 retrieval=retrieval_configuration,
-                target={"type": target_type, "version": adapter.version, "version_id": target_version_id},
+                target={
+                    "type": target_type,
+                    "version": adapter.version,
+                    "version_id": target_version_id,
+                    "execution_policy": {"max_concurrency": max_concurrency, "max_retries": effective_retries},
+                    "system_prompt_application": (
+                        "external_request_template" if applies_prompt else "not_sent_to_external_target"
+                    )
+                    if isinstance(adapter, ExternalHTTPTarget)
+                    else "provider_system_instruction"
+                    if isinstance(adapter, FoundationModelTarget)
+                    else "ignored_by_synthetic_fixture"
+                    if isinstance(adapter, SyntheticMockTarget)
+                    else "adapter_defined",
+                },
                 evaluators=[
                     {
                         "name": "deterministic_rules",
@@ -232,6 +285,8 @@ def run_evaluation(
                         "version": calibration.get("calibration_version"),
                         "status": calibration.get("status"),
                         "reviewed_cases": calibration.get("reviewed_cases", 0),
+                        "evaluator_version": calibration.get("evaluator_version"),
+                        "label_semantics_version": calibration.get("label_semantics_version"),
                     },
                 ],
                 model={
@@ -262,8 +317,8 @@ def run_evaluation(
                 environment=environment,
             )
             run_id = database.create_eval_run(
-                run_name=f"{prompt_name} · {selected_model} · {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-                model_name=selected_model,
+                run_name=f"{candidate_name} · {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                model_name=selected_model if controls_model else "unknown",
                 mode=mode,
                 total_questions=len(dataset),
                 total_executions=len(dataset),
@@ -314,7 +369,7 @@ def run_evaluation(
 
             engine = ExecutionEngine(
                 adapter,
-                ExecutionPolicy(max_concurrency=max_concurrency, max_retries=max_retries),
+                ExecutionPolicy(max_concurrency=max_concurrency, max_retries=effective_retries),
             )
 
             progress_base = completed_steps
@@ -343,6 +398,7 @@ def run_evaluation(
                 result.update(
                     {
                         "run_id": run_id,
+                        "manifest": manifest,
                         "manifest_hash": manifest["manifest_hash"],
                         "run_timestamp": manifest["created_at"],
                         "environment": manifest["environment"],
@@ -353,6 +409,10 @@ def run_evaluation(
                         "attempt_count": record.attempt_count,
                         "cache_hit": record.cache_hit,
                         "execution_key": record.execution_key,
+                        "document_versions": document_versions,
+                        "response_reported_provider": response.provider if response else None,
+                        "configured_runner_provider": configured_provider,
+                        "human_review_status": "not_reviewed",
                         "provider": response.provider if response else None,
                         "model_name": response.model if response else None,
                         "configured_runner_model": selected_model,
@@ -481,12 +541,19 @@ def run_evaluation(
                     "execution_elapsed_ms": round((record.completed_at - record.started_at) * 1000, 3)
                     if record.completed_at is not None and record.started_at is not None
                     else None,
+                    "execution": {
+                        "attempt_count": record.attempt_count,
+                        "cache_hit": record.cache_hit,
+                        "execution_key": record.execution_key,
+                        "max_retries": effective_retries,
+                    },
                     "model_identity": {
                         "provenance": result["model_identity_provenance"],
                         "reported_provider": result["provider"],
                         "reported_model": result["response_reported_model"],
                         "configured_runner_provider": configured_provider,
                         "configured_runner_model": selected_model,
+                        "target_type": target_type,
                     },
                 }
                 if response and (
@@ -523,7 +590,7 @@ def run_evaluation(
                         "Total cost is unknown because prior retry attempts may be billable; the final-attempt observation is retained separately."
                     )
                     result["estimated_cost"] = None
-                database.save_eval_result(run_id, result, context=context)
+                result["execution_id"] = database.save_eval_result(run_id, result, context=context)
                 all_results.append(result)
     return pd.DataFrame(all_results)
 
@@ -589,6 +656,8 @@ def _target_storage_configuration(adapter: TargetAdapter) -> dict[str, Any]:
     if hasattr(configuration, "__dataclass_fields__"):
         stored = target_configuration_for_storage(configuration)
         stored["version_hash"] = adapter.version
+        if implementation := getattr(adapter, "implementation_version", None):
+            stored["adapter_implementation_version"] = implementation
         return stored
     return {"adapter": type(adapter).__name__, "version_hash": adapter.version}
 

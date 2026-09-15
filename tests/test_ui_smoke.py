@@ -9,8 +9,10 @@ from src import config, database
 from src.storage import SQLiteRepository
 
 
-def app_for(repository, *, project=False):
+def app_for(monkeypatch, repository, *, project=False):
     database.set_repository(repository)
+    # AppTest starts a separate thread; ContextVar bindings intentionally do not transfer.
+    monkeypatch.setattr(database, "repository_from_url", lambda: repository)
     app = AppTest.from_file(config.ROOT_DIR / "app.py")
     if project:
         context = repository.local_context()
@@ -23,7 +25,7 @@ def app_for(repository, *, project=False):
 
 def test_streamlit_one_click_sample_has_no_launch_verdict_and_preserves_all_cases(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
-    app = app_for(SQLiteRepository(tmp_path / "untouched.sqlite3"))
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "untouched.sqlite3"))
     assert not app.exception
     assert app.radio(key="navigation").options == ["Start", "Prepare", "Connect", "Evaluate", "Review", "History"]
     assert not app.get("file_uploader")
@@ -39,8 +41,8 @@ def test_streamlit_one_click_sample_has_no_launch_verdict_and_preserves_all_case
     assert not (tmp_path / "untouched.sqlite3").exists()
 
 
-def test_user_journey_has_plain_checks_without_inline_json_or_version_columns(tmp_path):
-    app = app_for(SQLiteRepository(tmp_path / "plain-language.sqlite3"))
+def test_user_journey_has_plain_checks_without_inline_json_or_version_columns(tmp_path, monkeypatch):
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "plain-language.sqlite3"))
     app.button[0].click().run(timeout=30)
     app.session_state["privacy_acknowledged"] = True
     assert not app.get("json")
@@ -68,9 +70,9 @@ def test_user_journey_has_plain_checks_without_inline_json_or_version_columns(tm
     assert not app.get("json")
 
 
-def test_review_export_is_redacted_and_audited(tmp_path):
+def test_review_export_is_redacted_and_audited(tmp_path, monkeypatch):
     repository = SQLiteRepository(tmp_path / "exports.sqlite3")
-    app = app_for(repository)
+    app = app_for(monkeypatch, repository)
     app.button[0].click().run(timeout=30)
     app.radio(key="review_view").set_value("Export evidence").run(timeout=30)
     assert not app.exception
@@ -87,8 +89,8 @@ def test_review_export_is_redacted_and_audited(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM audit_logs WHERE action = 'report.export'").fetchone()[0] == 1
 
 
-def test_calibration_empty_state_and_clear_recovery(tmp_path):
-    app = app_for(SQLiteRepository(tmp_path / "calibration.sqlite3"), project=True)
+def test_calibration_empty_state_and_clear_recovery(tmp_path, monkeypatch):
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "calibration.sqlite3"), project=True)
     app.selectbox(key="advanced_tool").set_value("Evaluator Calibration").run(timeout=30)
     assert not app.exception
     rendered = " ".join(item.value for item in [*app.markdown, *app.warning, *app.info, *app.caption])
@@ -98,8 +100,8 @@ def test_calibration_empty_state_and_clear_recovery(tmp_path):
     assert any(item.label == "Validate and save calibration result" for item in app.button)
 
 
-def test_dataset_coverage_surfaces_thin_categories_without_a_quality_verdict(tmp_path):
-    app = app_for(SQLiteRepository(tmp_path / "coverage.sqlite3"), project=True)
+def test_dataset_coverage_surfaces_thin_categories_without_a_quality_verdict(tmp_path, monkeypatch):
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "coverage.sqlite3"), project=True)
     app.selectbox(key="advanced_tool").set_value("Evaluation Dataset").run(timeout=30)
     next(item for item in app.button if item.label == "Load sample evaluation dataset").click().run(timeout=30)
     assert not app.exception
@@ -109,7 +111,7 @@ def test_dataset_coverage_surfaces_thin_categories_without_a_quality_verdict(tmp
 
 
 def test_missing_external_session_credential_blocks_preflight_without_network(tmp_path, monkeypatch):
-    app = app_for(SQLiteRepository(tmp_path / "missing-external-key.sqlite3"))
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "missing-external-key.sqlite3"))
     app.button[0].click().run(timeout=30)
     app.session_state["privacy_acknowledged"] = True
     app.session_state["target_kind"] = "External assistant/API"
@@ -132,7 +134,7 @@ def test_missing_external_session_credential_blocks_preflight_without_network(tm
 def test_public_advanced_tools_do_not_expose_custom_upload_or_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
     monkeypatch.setattr(config, "OPENAI_API_KEY", "host-key-never-shown")
-    app = app_for(SQLiteRepository(tmp_path / "private.sqlite3"))
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "private.sqlite3"))
     for page in ["Prepare", "Connect", "Evaluate"]:
         app.radio(key="navigation").set_value(page).run(timeout=30)
         assert not app.exception
@@ -144,8 +146,8 @@ def test_public_advanced_tools_do_not_expose_custom_upload_or_credentials(tmp_pa
     assert not app.text_input
 
 
-def test_privacy_ack_survives_navigation_and_project_creation(tmp_path):
-    app = app_for(SQLiteRepository(tmp_path / "privacy.sqlite3"))
+def test_privacy_ack_survives_navigation_and_project_creation(tmp_path, monkeypatch):
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "privacy.sqlite3"))
     next(item for item in app.button if item.label == "Start a project").click().run(timeout=30)
     app.checkbox[0].check().run(timeout=30)
     app.text_input[0].set_value("September support release")
@@ -162,9 +164,9 @@ def test_privacy_ack_survives_navigation_and_project_creation(tmp_path):
     assert any(item.label == "Assistant endpoint" for item in app.text_input)
 
 
-def test_analytics_does_not_repeat_sample_events_on_result_rerun(tmp_path):
+def test_analytics_does_not_repeat_sample_events_on_result_rerun(tmp_path, monkeypatch):
     repository = SQLiteRepository(tmp_path / "events.sqlite3")
-    app = app_for(repository)
+    app = app_for(monkeypatch, repository)
     app.button[0].click().run(timeout=30)
     app.run(timeout=30)
     with repository.connection() as conn:
@@ -177,7 +179,7 @@ def test_analytics_does_not_repeat_sample_events_on_result_rerun(tmp_path):
 
 @pytest.mark.parametrize("target_kind", ["Direct foundation model", "External assistant/API"])
 def test_sample_does_not_authorize_real_execution_without_privacy_ack(tmp_path, monkeypatch, target_kind):
-    app = app_for(SQLiteRepository(tmp_path / "sample-to-real.sqlite3"))
+    app = app_for(monkeypatch, SQLiteRepository(tmp_path / "sample-to-real.sqlite3"))
     next(item for item in app.button if item.label == "Try the sample review").click().run(timeout=30)
     assert app.session_state["mode"] == "Demo Mode"
     assert app.session_state["privacy_acknowledged"] is False

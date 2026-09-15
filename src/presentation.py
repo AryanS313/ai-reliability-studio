@@ -26,6 +26,7 @@ _GATE_LABELS = {
     "maximum_latency_p95_ms": "Response time for 95% of calls",
     "maximum_cost_usd": "Total evaluation cost",
     "real_target_required": "Evidence from a real assistant",
+    "live_execution_not_verified": "Live assistant execution verified",
     "quality_executions_present": "Answers available to evaluate",
     "verified_target_type": "Assistant connection recorded",
     "quality_measurements_complete": "Complete quality measurements",
@@ -36,6 +37,7 @@ _GATE_LABELS = {
 }
 _GATE_EXPLANATIONS = {
     "real_target_required": "Sample answers demonstrate the workflow. They cannot establish the quality of a real assistant.",
+    "live_execution_not_verified": "Imported answers can be reviewed against supplied sources. They do not independently verify a live assistant call or establish release readiness.",
     "quality_executions_present": "At least one assistant call must return an answer that can be evaluated. Failed calls do not receive quality scores.",
     "verified_target_type": "The record must show which real assistant produced the answers. Missing connection information prevents a release assessment.",
     "quality_measurements_complete": "Every evaluated answer needs valid quality measurements. Missing scores do not count as passing evidence.",
@@ -65,6 +67,7 @@ _LATENCY_METRICS = {"latency_ms", "latency_p95_ms", "average_latency_ms", "p95_l
 _COUNT_METRICS = {
     "sample_size": "Distinct cases successfully evaluated",
     "severe_safety_failures": "Critical safety failures",
+    "critical_failure_count": "Critical safety failures",
     "unique_test_cases": "Distinct test cases",
     "total_executions": "Assistant calls",
     "quality_scored_executions": "Answers evaluated",
@@ -99,6 +102,8 @@ _FAILURE_EXPLANATIONS = {
     "unacceptable_answer": "The answer matches behavior marked as unacceptable for this case",
     "unsafe_response": "A safety check found behavior that requires review before release",
     "retrieval_failure": "The assistant did not retrieve the expected source",
+    "reference_evidence_missing": "The supplied reference documents do not include the expected source",
+    "expected_source_not_in_reference_corpus": "Add the source needed to check this answer; the current packet is incomplete",
     "citation_failure": "A citation is missing, cannot be traced, or does not support the answer",
     "escalation_failure": "The handoff decision, destination, or urgency does not match the expected behavior",
     "infrastructure_failure": "The assistant call failed, so no answer quality was scored",
@@ -161,6 +166,7 @@ _BEHAVIOR_LABELS = {
 }
 _RECOMMENDED_ACTIONS = {
     "Expected Answer Mismatch": "Compare the answer and expected behavior with the source. Ask a domain reviewer to confirm any missing condition before changing the instructions.",
+    "Reference Evidence Missing": "Add the missing reference source and review the answer again. Missing source evidence cannot establish whether the assistant was correct.",
     "Source Retrieval Failure": "Review the source passages and try finding more passages. Check that the reference document contains the information needed to answer.",
     "Citation Failure": "Require the assistant to cite the passage supporting each answer. Check that the cited source is available and actually supports the claim.",
     "Escalation Failure": "Clarify when the assistant must hand off a case, which person or team should receive it, and how urgently they should respond.",
@@ -297,6 +303,8 @@ def candidate_title(candidate_or_evaluation: Mapping[str, Any] | None) -> str:
         prompt = ""
     if target_type == "synthetic_mock":
         assistant = "Sample assistant"
+    elif target_type == "saved_responses":
+        assistant = _human_name(candidate.get("target_name")) or "Imported assistant answers"
     else:
         target = _human_name(candidate.get("target_name"))
         model = _human_name(candidate.get("model_name"))
@@ -385,6 +393,19 @@ def _missing_categories(gate: Mapping[str, Any]) -> list[str]:
     return [_human_name(item) for item in missing if _human_name(item)] if isinstance(missing, list | tuple) else []
 
 
+def retry_summary(df: pd.DataFrame) -> dict[str, Any]:
+    """Separate observed retries from unknown historical or imported attempt counts."""
+    attempts = pd.to_numeric(df.get("attempt_count", pd.Series(index=df.index, dtype=float)), errors="coerce")
+    known = attempts.notna() & attempts.ge(0) & attempts.mod(1).eq(0)
+    observed = int(attempts[known].sub(1).clip(lower=0).sum())
+    return {
+        "retries": observed if known.all() else None,
+        "observed_retries": observed,
+        "attempt_counts_recorded": int(known.sum()),
+        "attempt_counts_unknown": int((~known).sum()),
+    }
+
+
 def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
     """Return consistent run counts and context-sensitive completion wording."""
     df = evidence_frame(df)
@@ -409,10 +430,8 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
     cancelled = int(statuses.eq("cancelled").sum())
     skipped = int(statuses.eq("skipped").sum())
     infrastructure = int((~quality_mask & ~statuses.isin({"cancelled", "skipped"})).sum())
-    attempts = pd.to_numeric(df.get("attempt_count", pd.Series([1] * len(df), index=df.index)), errors="coerce").fillna(
-        1
-    )
-    retries = int(attempts.sub(1).clip(lower=0).sum())
+    retry_counts = retry_summary(df)
+    retries = retry_counts["retries"]
     unique_column = "case_id" if "case_id" in df else "question"
     counts: dict[str, Any] = {
         "unique_test_cases": int(df[unique_column].nunique()) if unique_column in df else len(df),
@@ -423,7 +442,7 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
         "infrastructure_errors": infrastructure,
         "cancelled_executions": cancelled,
         "skipped_executions": skipped,
-        "retries": retries,
+        **retry_counts,
     }
     parts = [f"Run complete: {len(df)} total executions"]
     if quality_mask.all():
@@ -440,6 +459,8 @@ def execution_summary(df: pd.DataFrame) -> dict[str, Any]:
         parts.append(f"{skipped} skipped")
     if retries:
         parts.append(f"{retries} retries")
+    elif retries is None:
+        parts.append("retry totals were not recorded for every execution")
     counts["message"] = "; ".join(parts) + "."
     return counts
 

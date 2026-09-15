@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import date
 from pathlib import Path
 from typing import TypedDict
@@ -15,6 +16,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+APP_RELEASE = "2026.09.16.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -27,6 +29,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 APP_ACCESS_MODE = os.getenv("APP_ACCESS_MODE", "public-demo").lower()
 AUTH_MODE = os.getenv("AUTH_MODE", "single-user").lower()
+PUBLIC_SESSION_TTL_SECONDS = int(os.getenv("PUBLIC_SESSION_TTL_SECONDS", "86400"))
 AUTH_SESSION_MAX_AGE_SECONDS = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "3600"))
 AUTH_REQUIRE_ISSUED_AT = os.getenv(
     "AUTH_REQUIRE_ISSUED_AT", "true" if APP_ENV == "production" else "false"
@@ -65,7 +68,7 @@ EXTERNAL_TARGET_ALLOWED_HOSTS = tuple(
 ALLOW_PRIVATE_EXTERNAL_TARGETS = os.getenv("ALLOW_PRIVATE_EXTERNAL_TARGETS", "false").lower() in {"1", "true", "yes"}
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "90"))
 LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "30"))
-PRICING_VERSION = os.getenv("PRICING_VERSION", "2026-08-20")
+PRICING_VERSION = os.getenv("PRICING_VERSION", "2026-09-08")
 PRICING_EFFECTIVE_DATE = os.getenv("PRICING_EFFECTIVE_DATE", "2026-08-20")
 
 
@@ -107,8 +110,9 @@ TOKEN_PRICING_PER_1K: dict[str, PricingEntry] = {
         "input": 0.002,
         "output": 0.01,
         "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-        "effective_date": "2026-08-20",
-        "expires_on": "2026-08-31",
+        # The introductory rate became the standard rate; the announced
+        # September 1 increase was cancelled (source checked September 8).
+        "effective_date": "2026-09-08",
     },
     "claude-haiku-4-5": {
         "input": 0.001,
@@ -149,13 +153,30 @@ ESCALATION_KEYWORDS = [
 def available_models(api_key: str | None = None, provider: str = "openai") -> list[str]:
     models = ["mock-model"]
     provider = provider.lower()
-    if api_key or PROVIDER_API_KEYS.get(provider):
+    if APP_ACCESS_MODE != "public-demo" and (api_key or api_key_for_provider(provider)):
         models.extend(PROVIDER_MODELS.get(provider, []))
     return list(dict.fromkeys([m for m in models if m]))
 
 
 def api_key_for_provider(provider: str) -> str:
+    if public_sessions_enabled():
+        return ""
     return PROVIDER_API_KEYS.get(provider.lower(), "")
+
+
+def public_sessions_enabled() -> bool:
+    """Explicit anonymous mode; it never weakens the normal production auth mode."""
+    return APP_ACCESS_MODE in {"public-demo", "browser"}
+
+
+def is_browser_runtime() -> bool:
+    """Only actual browser WebAssembly can enable browser-only capabilities."""
+    return APP_ACCESS_MODE == "browser" and sys.platform == "emscripten"
+
+
+def browser_runtime_enabled() -> bool:
+    """Compatibility for older modules retained during a Streamlit source update."""
+    return is_browser_runtime()
 
 
 def provider_for_model(model_name: str) -> str:

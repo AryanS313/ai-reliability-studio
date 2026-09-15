@@ -13,9 +13,11 @@ from src.calibration import (
     read_calibration_dataset,
     run_calibration_workflow,
     uncalibrated_status,
+    validate_calibration_for_run,
 )
 from src.scoring import EVALUATOR_VERSION, LABEL_SEMANTICS_VERSION
 from src.storage import SQLiteRepository
+from src.versioning import version_hash
 
 
 def _calibration_rows(count: int = 40) -> pd.DataFrame:
@@ -45,10 +47,10 @@ def _calibration_rows(count: int = 40) -> pd.DataFrame:
 def test_calibration_reports_confusion_matrix_and_observed_metrics():
     result = calibrate_evaluators(
         _calibration_rows(),
-        labels=["policy_contradiction"],
-        requirements=CalibrationRequirements(),
         evaluator_version=EVALUATOR_VERSION,
         label_semantics_version=LABEL_SEMANTICS_VERSION,
+        labels=["policy_contradiction"],
+        requirements=CalibrationRequirements(),
     )
     metric = result["evaluators"]["policy_contradiction"]
     assert result["status"] == "calibrated"
@@ -81,6 +83,8 @@ def test_threshold_versions_are_immutable_inputs_to_calibration():
     assert first.version != second.version
     result = calibrate_evaluators(
         _calibration_rows(),
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
         labels=["policy_contradiction"],
         thresholds=second,
     )
@@ -196,3 +200,94 @@ def test_full_version_bound_calibration_qualifies_and_tampering_or_staleness_rej
 def test_calibration_json_scalar_has_actionable_parse_error(data):
     with pytest.raises(ValueError, match="parsed safely"):
         read_calibration_dataset("reviews.json", data)
+
+
+def _qualified_calibration(**kwargs):
+    return calibrate_evaluators(
+        _calibration_rows(),
+        labels=["policy_contradiction"],
+        evaluator_version=kwargs.get("evaluator_version", EVALUATOR_VERSION),
+        label_semantics_version=kwargs.get("label_semantics_version", LABEL_SEMANTICS_VERSION),
+    )
+
+
+def test_metrics_without_explicit_version_provenance_are_not_qualifying_calibration():
+    result = calibrate_evaluators(_calibration_rows(), labels=["policy_contradiction"])
+    assert result["evaluators"]["policy_contradiction"]["precision"] == 1
+    assert result["status"] == "insufficiently_calibrated"
+    assert any("version" in item for item in result["limitations"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("evaluator_version", "deterministic-v3", "evaluator version"),
+        ("evaluator_version", None, "evaluator version"),
+        ("label_semantics_version", "outdated-labels", "label-semantics version"),
+        ("label_semantics_version", None, "label-semantics version"),
+        ("calibration_version", "invented", "content hash"),
+        ("calibration_version", None, "content hash"),
+        ("reviewed_cases", 999, "content hash"),
+    ],
+)
+def test_qualifying_calibration_is_bound_to_versions_and_untampered_result(field, value, message):
+    result = _qualified_calibration()
+    result[field] = value
+    with pytest.raises(ValueError, match=message):
+        validate_calibration_for_run(
+            result,
+            EvaluatorThresholdConfiguration(),
+            evaluator_version=EVALUATOR_VERSION,
+            label_semantics_version=LABEL_SEMANTICS_VERSION,
+        )
+
+
+def test_current_calibration_passes_binding_check_with_workflow_storage_id():
+    result = _qualified_calibration()
+    validate_calibration_for_run(
+        {**result, "calibration_id": 42},
+        EvaluatorThresholdConfiguration(),
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
+    )
+
+
+def test_calibration_version_changes_when_evaluator_or_evidence_changes():
+    current = _qualified_calibration()
+    older = _qualified_calibration(evaluator_version="deterministic-v3")
+    assert current["calibration_version"] != older["calibration_version"]
+    different_reviews = calibrate_evaluators(
+        _calibration_rows().assign(case_id=lambda frame: "other-" + frame["case_id"]),
+        labels=["policy_contradiction"],
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
+    )
+    assert current["evaluators"] == different_reviews["evaluators"]
+    assert current["reviewed_dataset_hash"] != different_reviews["reviewed_dataset_hash"]
+    assert current["calibration_version"] != different_reviews["calibration_version"]
+
+
+def test_persisted_calibration_payload_and_hash_include_actual_evaluator_version(tmp_path):
+    repository = SQLiteRepository(tmp_path / "versioned-calibration.sqlite3")
+    context = repository.local_context()
+    original = run_calibration_workflow(
+        repository,
+        context,
+        _calibration_rows(),
+        evaluator_version="deterministic-v3",
+        labels=["policy_contradiction"],
+    )
+    stored = repository.latest_calibration(context)
+    assert stored["evaluator_version"] == stored["result"]["evaluator_version"] == "deterministic-v3"
+    payload = stored["result"]
+    assert (
+        version_hash({key: value for key, value in payload.items() if key != "calibration_version"})
+        == original["calibration_version"]
+    )
+    with pytest.raises(ValueError, match="evaluator version"):
+        validate_calibration_for_run(
+            payload,
+            EvaluatorThresholdConfiguration(),
+            evaluator_version=EVALUATOR_VERSION,
+            label_semantics_version=LABEL_SEMANTICS_VERSION,
+        )

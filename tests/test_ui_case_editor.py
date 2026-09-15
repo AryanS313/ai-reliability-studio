@@ -9,9 +9,11 @@ from src import config, database
 from src.storage import SQLiteRepository
 
 
-def case_app(tmp_path):
+def case_app(monkeypatch, tmp_path):
     repository = SQLiteRepository(tmp_path / "case-editor.sqlite3")
     database.set_repository(repository)
+    # AppTest starts a separate thread; ContextVar bindings intentionally do not transfer.
+    monkeypatch.setattr(database, "repository_from_url", lambda: repository)
     context = repository.local_context()
     project = repository.create_project(context, {"name": "Question editing"})
     app = AppTest.from_file(config.ROOT_DIR / "app.py")
@@ -22,8 +24,8 @@ def case_app(tmp_path):
     return app.run(timeout=30), repository, context
 
 
-def test_new_question_draft_is_editable_before_coverage_validation(tmp_path):
-    app, _, _ = case_app(tmp_path)
+def test_new_question_draft_is_editable_before_coverage_validation(tmp_path, monkeypatch):
+    app, _, _ = case_app(monkeypatch, tmp_path)
     next(item for item in app.button if item.label == "Create cases in the editor").click().run(timeout=30)
     assert not app.exception
     assert any(item.proto.editing_mode for item in app.dataframe)
@@ -31,8 +33,8 @@ def test_new_question_draft_is_editable_before_coverage_validation(tmp_path):
     assert not app.get("json")
 
 
-def test_case_editor_hides_ids_and_nested_metadata_and_shows_friendly_coverage(tmp_path):
-    app, _, _ = case_app(tmp_path)
+def test_case_editor_hides_ids_and_nested_metadata_and_shows_friendly_coverage(tmp_path, monkeypatch):
+    app, _, _ = case_app(monkeypatch, tmp_path)
     next(item for item in app.button if item.label == "Load sample evaluation dataset").click().run(timeout=30)
     assert not app.exception
     editor = next(item for item in app.dataframe if item.proto.editing_mode)
@@ -57,8 +59,8 @@ def test_case_editor_hides_ids_and_nested_metadata_and_shows_friendly_coverage(t
     assert "does not establish assistant quality" in captions
 
 
-def test_editor_applies_visible_change_and_keeps_saved_nested_rules(tmp_path):
-    app, repository, context = case_app(tmp_path)
+def test_editor_applies_visible_change_and_keeps_saved_nested_rules(tmp_path, monkeypatch):
+    app, repository, context = case_app(monkeypatch, tmp_path)
     next(item for item in app.button if item.label == "Load sample evaluation dataset").click().run(timeout=30)
     before = app.session_state["eval_df"].copy(deep=True)
     editor = next(item for item in app.dataframe if item.proto.editing_mode)

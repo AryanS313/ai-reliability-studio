@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -122,6 +123,35 @@ def test_secret_and_filename_protection():
     value = redact_secrets({"api_key": "sk-secret-value-123456", "safe": 3})
     assert value == {"api_key": "[REDACTED]", "safe": 3}
     assert "user@example.com" not in redact_pii("Contact user@example.com")
+
+
+def test_numeric_token_budgets_and_usage_are_not_credentials(tmp_path):
+    configuration = {"provider": "anthropic", "model": "claude-sonnet-5", "max_tokens": 2048}
+    assert redact_secrets(configuration) == configuration
+    usage = {"input_tokens": 21, "output_tokens": 0, "total_tokens": 21, "token_limit": None}
+    assert redact_secrets({"usage": usage}) == {"usage": usage}
+    repository = SQLiteRepository(tmp_path / "numeric-token-budget.sqlite3")
+    context = repository.local_context()
+    version_id = repository.create_target_version(context, None, "Foundation model", "foundation_model", configuration)
+    with repository.connection() as conn:
+        stored = conn.execute("SELECT configuration_json FROM target_versions WHERE id = ?", (version_id,)).fetchone()
+    assert json.loads(stored[0]) == configuration
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("token", 2048),
+        ("access_token", 2048),
+        ("api_key", 12345),
+        ("max_tokens", "sk-fixture-secret-123456"),
+        ("max_tokens", {"api_key": "fixture-secret"}),
+        ("max_tokens", True),
+        ("access_token_count", 5),
+    ],
+)
+def test_token_quantity_exception_does_not_preserve_credentials(key, value):
+    assert redact_secrets({key: value}) == {key: "[REDACTED]"}
 
 
 def test_audit_metadata_redacts_secret_references(tmp_path):

@@ -4,13 +4,23 @@
 
 A design-partner beta for small product teams shipping assistants grounded in policies and knowledge articles. Run approved test cases against a staging assistant, inspect consequential failures and source evidence, then compare the next revision with its baseline.
 
-[Open the live demo](https://ai-reliability-studio.streamlit.app/) · [Product brief](docs/design-partner/product-brief.md) · [Setup and deployment](docs/DEPLOYMENT.md)
+[Open the browser app](https://ai-reliability-studio.a3103.chatgpt.site/) · [Product brief](docs/design-partner/product-brief.md) · [Setup and deployment](docs/DEPLOYMENT.md)
 
-> This repository contains local changes for review. The live deployment has not been updated by this work. Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
+> Release integration combines the guided release workflow with the browser and saved-answer capabilities from main. The owner has authorized shipping; final combined checks and live verification are tracked in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
+
+## Use the browser app
+
+The hosted edition runs the Python application in your browser tab. Start with **Try the sample review** for 32 fictional cases. Under **Start → Review answers you already have**, choose the three-answer example or review answers exported from your own assistant. Custom work requires the data-handling acknowledgment and a saved project. Upload the question set, complete source packet and saved answers; inspect each answer, record a review, then compare replacement answers.
+
+The saved-answer path makes no provider request. A review records its author, method, explanation and the exact answer/question/source versions. Automatic checks remain advisory. Uploaded identity, capture time and unobserved client retrieval, latency or cost are not independently verified. Restore a downloaded workspace to continue compatible reviews; changing an answer invalidates its previous review. Primary screens use forms, upload controls and readable findings; JSON is an optional file format for engineers, not a text-editing prerequisite.
+
+**Download workspace to resume later** before closing or reloading the tab. Unexported browser work and session keys are temporary; returning after 24 hours of inactivity also clears them. Workspace downloads contain original sources, answers and notes and must stay private. Redacted reports are separate files. The browser can call supported model providers only with your entered key and explicit consent; arbitrary assistant endpoints require the native private app or saved-answer import.
+
+First startup downloads substantial runtime assets. The browser uses Stlite 0.76.0 / Streamlit 1.41.0 and Pyodide 0.26.4; its dependency bundle is distinct from the native environment. See [browser requirements and limitations](docs/browser-edition.md) and [deployment verification](docs/DEPLOYMENT.md#browser-distribution-and-hosting). The current release's final hosted checks are recorded separately from earlier runtime fixtures.
 
 ## Start locally
 
-Python **3.11 or 3.12** is required. Python 3.9 is unsupported. The current local verification used **Python 3.12.14**; Python 3.11 dependency resolution was checked with a dry run, but its runtime suite was not executed locally. CI is configured to exercise both versions after the changes are approved and pushed.
+Python **3.11 or 3.12** is required. Python 3.9 is unsupported. The current local verification used **Python 3.12.14**; Python 3.11 dependency resolution was checked with a dry run, but its runtime suite was not executed locally. CI is configured to exercise both versions; completed remote results are recorded separately from local checks.
 
 ```bash
 cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio
@@ -41,7 +51,7 @@ Use approved, non-sensitive test data on a trusted computer. Local mode is for a
 | **Review** | Separate execution errors from answer failures; inspect evidence, missing calibration and next actions; record a decision and export redacted evidence. |
 | **History** | Reopen prior evidence and compare a revision using compatible cases and evaluator settings. |
 
-Evaluator calibration, retrieval testing, detailed failure analysis, and workspace settings are available under **Advanced tools**.
+Evaluator calibration, retrieval testing, saved-answer review, detailed failure analysis, and workspace settings are available under **Advanced tools**. Select **Choose a tool** to close the advanced view and return to the selected primary step.
 
 ### A simple HTTPS connection: no configuration file required
 
@@ -120,6 +130,7 @@ A synthetic report intentionally exits **2** because it cannot pass a real launc
 | Mode | Boundary |
 |---|---|
 | `public-demo` — default | Anonymous sample only, separate in-memory session, no custom uploads or real calls. New sessions/process restarts do not restore earlier data. |
+| `browser` | Accepted only in the actual WebAssembly browser runtime; tab-local memory, approved custom inputs/saved reviews and visitor-supplied provider keys; no arbitrary assistant HTTP endpoints. Setting this value in native Python does not enable it. |
 | `local` | Persistent SQLite on a trusted computer, loopback binding, one trusted operator, approved inputs and credentials. |
 | `authenticated` | Shared hosting requires validated identity proxy/provisioning, managed PostgreSQL/RLS, secure ingress/egress and operational controls. Configuration alone does not establish readiness. |
 

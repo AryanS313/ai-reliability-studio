@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -12,7 +13,9 @@ import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qsl, urljoin, urlparse
 
@@ -39,7 +42,9 @@ class SecretResolver:
         if not re.fullmatch(r"secret://[A-Za-z_][A-Za-z0-9_]*", reference):
             raise TargetConfigurationError("Secret values must use a secret://NAME reference")
         name = reference.removeprefix("secret://")
-        value = self._values.get(name) or (os.getenv(name, "") if name in self._environment_names else "")
+        value = self._values.get(name) or (
+            os.getenv(name, "") if name in self._environment_names and not config.public_sessions_enabled() else ""
+        )
         if not value:
             raise TargetConfigurationError(f"Secret reference {name!r} is not configured")
         self._resolved_values.add(value)
@@ -61,8 +66,17 @@ class TargetAdapter(ABC):
     def execute(self, request: dict[str, Any]) -> TargetResponse:
         raise NotImplementedError
 
+    @property
+    def default_retry_count(self) -> int:
+        return 2
+
     def health_check(self) -> TargetResponse:
-        return TargetResponse(status=ExecutionStatus.PASSED, metadata={"health": "available"})
+        return TargetResponse(
+            status=ExecutionStatus.PENDING,
+            error_code="health_check_not_configured",
+            safe_error="No network health check was performed. This target has no configured health-check path.",
+            metadata={"health": "not_checked", "network_checked": False},
+        )
 
 
 @dataclass(frozen=True)
@@ -228,6 +242,7 @@ class FoundationModelConfig:
 
 class FoundationModelTarget(TargetAdapter):
     target_type = TargetType.FOUNDATION_MODEL
+    implementation_version = "provider-native-system-v2"
 
     def __init__(self, configuration: FoundationModelConfig, secrets: SecretResolver | None = None) -> None:
         self.configuration = configuration
@@ -236,11 +251,24 @@ class FoundationModelTarget(TargetAdapter):
     @property
     def version(self) -> str:
         # The reference name is reproducible; the secret value is deliberately absent.
-        return version_hash({"type": self.target_type.value, **asdict(self.configuration)})
+        return version_hash(
+            {
+                "type": self.target_type.value,
+                "implementation_version": self.implementation_version,
+                **asdict(self.configuration),
+            }
+        )
 
     def execute(self, request: dict[str, Any]) -> TargetResponse:
         from src.llm_client import generate_answer
 
+        if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.is_browser_runtime():
+            return TargetResponse(
+                status=ExecutionStatus.INVALID_RESPONSE,
+                error_code="real_provider_disabled_in_public_demo",
+                safe_error="Real provider calls require a private workspace or a verified browser runtime.",
+                metadata={"quality_score_eligible": False, "retryable": False},
+            )
         api_key = self.secrets.resolve(self.configuration.api_key_reference)
         result = generate_answer(
             question=str(request.get("question") or request.get("input") or ""),
@@ -262,8 +290,9 @@ class FoundationModelTarget(TargetAdapter):
             metadata=dict(result.get("metadata") or {}),
             error_code=result.get("error_code"),
             safe_error=result.get("safe_error"),
-            provider=self.configuration.provider,
-            model=result.get("model"),
+            http_status=result.get("http_status"),
+            provider=_optional_identity(result.get("provider")),
+            model=_optional_identity(result.get("model")),
             final_prompt=str(result.get("final_prompt", "")),
         )
 
@@ -282,38 +311,20 @@ class ExternalTargetConfig:
     health_check_path: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, str) or any(character.isspace() for character in self.endpoint):
-            raise TargetConfigurationError("External endpoint must be a URL without whitespace")
-        try:
-            parsed = urlparse(self.endpoint)
-            _ = parsed.port
-        except ValueError as exc:
-            raise TargetConfigurationError("External endpoint has an invalid port") from exc
-        host = (parsed.hostname or "").lower()
-        if not host or parsed.username or parsed.password:
-            raise TargetConfigurationError(
-                "External target endpoint must have a valid host and no embedded credentials"
-            )
-        if parsed.fragment or redact_secrets(dict(parse_qsl(parsed.query))) != dict(parse_qsl(parsed.query)):
-            raise TargetConfigurationError("Endpoint URLs cannot contain fragments or secret query parameters")
-        private_host = _is_private_host(host)
-        loopback_host = _is_loopback_host(host)
-        if parsed.scheme != "https" and not (
-            parsed.scheme == "http" and loopback_host and config.APP_ENV != "production"
-        ):
-            raise TargetConfigurationError("External endpoints must use HTTPS; local HTTP is development-only")
-        if config.APP_ENV == "production" and not config.EXTERNAL_TARGET_ALLOWED_HOSTS:
-            raise TargetConfigurationError("Production external targets require EXTERNAL_TARGET_ALLOWED_HOSTS")
-        if config.EXTERNAL_TARGET_ALLOWED_HOSTS and host not in config.EXTERNAL_TARGET_ALLOWED_HOSTS:
-            raise TargetConfigurationError("External target host is not in EXTERNAL_TARGET_ALLOWED_HOSTS")
-        local_development = loopback_host and config.APP_ENV != "production"
-        if private_host and not local_development and not config.ALLOW_PRIVATE_EXTERNAL_TARGETS:
-            raise TargetConfigurationError("Private-network external targets require explicit operator approval")
+        _validate_endpoint_policy(self.endpoint)
         if not isinstance(self.method, str) or self.method.upper() not in {"GET", "POST", "PUT", "PATCH"}:
             raise TargetConfigurationError("External target method must be GET, POST, PUT, or PATCH")
-        if not isinstance(self.timeout_seconds, int | float) or not 0.1 <= self.timeout_seconds <= 300:
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, int | float)
+            or not 0.1 <= self.timeout_seconds <= 300
+        ):
             raise TargetConfigurationError("timeout_seconds must be between 0.1 and 300")
-        if not isinstance(self.retry_count, int) or not 0 <= self.retry_count <= 10:
+        if (
+            isinstance(self.retry_count, bool)
+            or not isinstance(self.retry_count, int)
+            or not 0 <= self.retry_count <= 10
+        ):
             raise TargetConfigurationError("retry_count must be between 0 and 10")
         if not isinstance(self.headers, dict) or not isinstance(self.request_template, dict):
             raise TargetConfigurationError("Headers and request template must be JSON objects")
@@ -360,13 +371,30 @@ class ExternalHTTPTarget(TargetAdapter):
     def version(self) -> str:
         return version_hash({"type": self.target_type.value, **asdict(self.configuration)})
 
+    @property
+    def default_retry_count(self) -> int:
+        return self.configuration.retry_count
+
+    @property
+    def sends_system_prompt(self) -> bool:
+        """Only rendered body values can transmit Studio's prompt to this endpoint."""
+
+        def contains(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(contains(item) for item in value.values())
+            if isinstance(value, list):
+                return any(contains(item) for item in value)
+            return isinstance(value, str) and "${system_prompt}" in value
+
+        return self.configuration.method.upper() != "GET" and contains(self.configuration.request_template)
+
     def execute(self, request: dict[str, Any]) -> TargetResponse:
-        if config.APP_ACCESS_MODE == "public-demo":
+        if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="public_demo_external_disabled",
-                safe_error="The public demo accepts synthetic sample runs only. Connect assistants in a private workspace.",
-                provider="external",
+                safe_error="External assistant calls are available in private native workspaces only.",
+                metadata={"quality_score_eligible": False, "retryable": False},
             )
         started = time.perf_counter()
         try:
@@ -377,7 +405,7 @@ class ExternalHTTPTarget(TargetAdapter):
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="external_destination_blocked",
                 safe_error="The external target destination failed network safety validation.",
-                provider="external",
+                provider=None,
             )
         headers = {name: self._header_value(value) for name, value in self.configuration.headers.items()}
         headers.setdefault("Content-Type", "application/json")
@@ -388,7 +416,7 @@ class ExternalHTTPTarget(TargetAdapter):
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="external_request_too_large",
                 safe_error="The rendered external target request exceeds the configured size limit.",
-                provider="external",
+                provider=None,
             )
         http_request = urllib.request.Request(  # noqa: S310 - ExternalTargetConfig restricts schemes to HTTPS or loopback HTTP
             self.configuration.endpoint,
@@ -409,7 +437,7 @@ class ExternalHTTPTarget(TargetAdapter):
                     http_status=status_code,
                     error_code="external_redirect_blocked",
                     safe_error="The external target attempted a cross-origin redirect, which was blocked.",
-                    provider="external",
+                    provider=None,
                 )
             if 300 <= status_code < 400:
                 return TargetResponse(
@@ -418,25 +446,10 @@ class ExternalHTTPTarget(TargetAdapter):
                     http_status=status_code,
                     error_code="external_redirect_blocked",
                     safe_error="External target redirects are disabled.",
-                    provider="external",
+                    provider=None,
                 )
             if status_code >= 400:
-                rate_limited = status_code == 429
-                authentication_error = status_code in {401, 403}
-                return TargetResponse(
-                    status=ExecutionStatus.RATE_LIMITED if rate_limited else ExecutionStatus.FAILED,
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                    http_status=status_code,
-                    error_code=(
-                        "rate_limited"
-                        if rate_limited
-                        else "external_authentication_error"
-                        if authentication_error
-                        else "external_http_error"
-                    ),
-                    safe_error=f"External target returned HTTP {status_code}.",
-                    provider="external",
-                )
+                return _http_failure_response(status_code, getattr(response, "headers", None), started=started)
             try:
                 response_bytes = response.read(config.MAX_EXTERNAL_RESPONSE_BYTES + 1)
             except TypeError:  # Minimal test/dummy responses may not expose read(size).
@@ -448,73 +461,58 @@ class ExternalHTTPTarget(TargetAdapter):
                     http_status=status_code,
                     error_code="external_response_too_large",
                     safe_error="The external target response exceeds the configured size limit.",
-                    provider="external",
+                    provider=None,
                 )
             raw = response_bytes.decode("utf-8", errors="replace")
             data = _parse_stream(raw) if self.configuration.streaming else json.loads(raw)
-        except TargetConfigurationError:
-            return TargetResponse(
-                status=ExecutionStatus.INVALID_RESPONSE,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                error_code="external_destination_blocked",
-                safe_error="The external target destination failed network safety validation.",
-                provider="external",
-            )
         except TimeoutError:
             return TargetResponse(
                 status=ExecutionStatus.TIMED_OUT,
                 latency_ms=(time.perf_counter() - started) * 1000,
                 error_code="target_timeout",
                 safe_error="The external target did not respond before the configured timeout.",
-                provider="external",
+                provider=None,
             )
         except urllib.error.HTTPError as exc:
-            status_code = int(exc.code)
-            if 300 <= status_code < 400:
-                return TargetResponse(
-                    status=ExecutionStatus.INVALID_RESPONSE,
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                    http_status=status_code,
-                    error_code="external_redirect_blocked",
-                    safe_error="External target redirects are disabled.",
-                    provider="external",
-                )
-            status = ExecutionStatus.RATE_LIMITED if status_code == 429 else ExecutionStatus.FAILED
+            try:
+                return _http_failure_response(int(exc.code), exc.headers, started=started)
+            finally:
+                exc.close()
+        except TargetConfigurationError:
             return TargetResponse(
-                status=status,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                http_status=status_code,
-                error_code=(
-                    "rate_limited"
-                    if status_code == 429
-                    else "external_authentication_error"
-                    if status_code in {401, 403}
-                    else "external_http_error"
-                ),
-                safe_error=f"External target returned HTTP {status_code}.",
-                provider="external",
+                status=ExecutionStatus.INVALID_RESPONSE,
+                error_code="external_destination_blocked",
+                safe_error="The external target destination failed network safety validation.",
             )
-        except (urllib.error.URLError, json.JSONDecodeError, UnicodeError, OSError, http.client.HTTPException):
+        except urllib.error.URLError as exc:
+            timed_out = isinstance(exc.reason, TimeoutError)
+            return TargetResponse(
+                status=ExecutionStatus.TIMED_OUT if timed_out else ExecutionStatus.INVALID_RESPONSE,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                error_code="target_timeout" if timed_out else "invalid_external_response",
+                safe_error="The external target did not respond before the configured timeout."
+                if timed_out
+                else "External target response could not be validated.",
+            )
+        except (json.JSONDecodeError, UnicodeError):
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 latency_ms=(time.perf_counter() - started) * 1000,
                 error_code="invalid_external_response",
                 safe_error="External target response could not be validated.",
-                provider="external",
+                provider=None,
             )
         finally:
-            close = getattr(response, "close", None)
-            if callable(close):
-                close()
-        mappings = self.configuration.response_mappings
+            if response is not None and callable(getattr(response, "close", None)):
+                response.close()
         if self.secrets.redact(data) != data:
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="credential_in_target_response",
                 safe_error="The target echoed a runtime credential. The response was discarded; rotate the credential and inspect the assistant.",
-                provider="external",
-                metadata={"quality_score_eligible": False, "credential_response_discarded": True},
+                metadata={"quality_score_eligible": False, "credential_response_discarded": True, "retryable": False},
             )
+        mappings = self.configuration.response_mappings
         answer = _json_path(data, mappings.get("answer", "$.answer"))
         if not isinstance(answer, str) or not answer.strip():
             return TargetResponse(
@@ -523,7 +521,7 @@ class ExternalHTTPTarget(TargetAdapter):
                 http_status=status_code,
                 error_code="missing_answer",
                 safe_error="The configured answer mapping did not produce non-empty text.",
-                provider="external",
+                provider=None,
             )
         citations = _as_tuple_of_dicts(_json_path(data, mappings.get("citations", "")))
         tool_calls = _as_tuple_of_dicts(_json_path(data, mappings.get("tool_calls", "")))
@@ -541,29 +539,40 @@ class ExternalHTTPTarget(TargetAdapter):
             output_tokens=_optional_int(_json_path(data, mappings.get("output_tokens", ""))),
             cost=_optional_float(_json_path(data, mappings.get("cost", ""))),
             metadata=metadata if isinstance(metadata, dict) else {},
-            provider="external",
-            model=str(_json_path(data, mappings.get("model", "")) or "external-assistant"),
+            provider=_optional_identity(_json_path(data, mappings.get("provider", ""))),
+            model=_optional_identity(_json_path(data, mappings.get("model", ""))),
         )
 
     def health_check(self) -> TargetResponse:
-        if config.APP_ACCESS_MODE == "public-demo":
+        if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="public_demo_external_disabled",
-                safe_error="External health checks are available in private workspaces only.",
+                safe_error="External assistant calls are available in private native workspaces only.",
+                metadata={"quality_score_eligible": False, "retryable": False},
             )
         if not self.configuration.health_check_path:
-            return TargetResponse(
-                status=ExecutionStatus.INVALID_RESPONSE,
-                error_code="health_check_not_configured",
-                safe_error="No health-check path is configured. Run a test case to verify this assistant.",
-            )
+            return super().health_check()
         endpoint = urljoin(self.configuration.endpoint, self.configuration.health_check_path)
         response = None
+        started = time.perf_counter()
+        attempted = False
+
+        def checked(result: TargetResponse) -> TargetResponse:
+            return replace(
+                result,
+                metadata={
+                    **result.metadata,
+                    "health": "passed" if result.status == ExecutionStatus.PASSED else "failed",
+                    "network_checked": attempted,
+                },
+            )
+
         try:
             self.configuration.__post_init__()
             _validate_resolved_destination(endpoint)
             headers = {name: self._header_value(value) for name, value in self.configuration.headers.items()}
+            attempted = True
             response = self._opener(
                 urllib.request.Request(  # noqa: S310 - endpoint inherits validated target origin
                     endpoint, headers=headers, method="GET"
@@ -571,27 +580,42 @@ class ExternalHTTPTarget(TargetAdapter):
                 timeout=min(10, self.configuration.timeout_seconds),
             )
             status = int(getattr(response, "status", 200))
-            final_url_getter = getattr(response, "geturl", None)
-            final_url = str(final_url_getter()) if callable(final_url_getter) else endpoint
+            final_url = response.geturl() if hasattr(response, "geturl") else endpoint
             if not _same_origin(endpoint, final_url) or 300 <= status < 400:
-                return TargetResponse(
-                    status=ExecutionStatus.INVALID_RESPONSE,
-                    error_code="external_redirect_blocked",
-                    safe_error="Health-check redirects are disabled.",
+                return checked(
+                    TargetResponse(
+                        status=ExecutionStatus.INVALID_RESPONSE,
+                        http_status=status,
+                        error_code="external_redirect_blocked",
+                        safe_error="External target health-check redirects are disabled.",
+                    )
                 )
-            return TargetResponse(
-                status=ExecutionStatus.PASSED if 200 <= status < 300 else ExecutionStatus.FAILED, http_status=status
+            if not 200 <= status < 300:
+                return checked(_http_failure_response(status, getattr(response, "headers", None), started=started))
+            return checked(
+                TargetResponse(
+                    status=ExecutionStatus.PASSED,
+                    http_status=status,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
             )
+        except urllib.error.HTTPError as exc:
+            try:
+                return checked(_http_failure_response(int(exc.code), exc.headers, started=started))
+            finally:
+                exc.close()
         except Exception:
-            return TargetResponse(
-                status=ExecutionStatus.FAILED,
-                error_code="health_check_failed",
-                safe_error="External target health check failed.",
+            return checked(
+                TargetResponse(
+                    status=ExecutionStatus.FAILED,
+                    error_code="health_check_failed",
+                    safe_error="External target health check failed.",
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
             )
         finally:
-            close = getattr(response, "close", None)
-            if callable(close):
-                close()
+            if response is not None and callable(getattr(response, "close", None)):
+                response.close()
 
     def _header_value(self, value: str) -> str:
         if value.startswith("secret://"):
@@ -601,10 +625,65 @@ class ExternalHTTPTarget(TargetAdapter):
         return value
 
 
+def _retry_after_seconds(value: Any) -> float | None:
+    if not isinstance(value, str) or not value.strip() or len(value) > 128:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            stamp = parsedate_to_datetime(value)
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            seconds = max(0.0, (stamp - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _http_failure_response(status: int, headers: Any, *, started: float) -> TargetResponse:
+    redirect = 300 <= status < 400
+    metadata: dict[str, Any] = {
+        "quality_score_eligible": False,
+        "retryable": status in {408, 409, 429} or 500 <= status < 600,
+    }
+    retry_after = _retry_after_seconds(headers.get("Retry-After")) if headers is not None else None
+    if retry_after is not None and retry_after > 600:
+        metadata["retryable"] = False
+        metadata["retry_suppressed"] = "retry_after_exceeds_supported_limit"
+    elif retry_after is not None:
+        metadata["retry_after_seconds"] = retry_after
+    return TargetResponse(
+        status=ExecutionStatus.INVALID_RESPONSE
+        if redirect
+        else ExecutionStatus.RATE_LIMITED
+        if status == 429
+        else ExecutionStatus.FAILED,
+        http_status=status,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        error_code="external_redirect_blocked"
+        if redirect
+        else "rate_limited"
+        if status == 429
+        else "external_authentication_error"
+        if status in {401, 403}
+        else "external_http_error",
+        safe_error="External target redirects are disabled."
+        if redirect
+        else f"External target returned HTTP {status}.",
+        metadata=metadata,
+    )
+
+
 def target_configuration_for_storage(configuration: Any) -> dict[str, Any]:
     value = asdict(configuration)
     # Reject accidental raw credentials in all serializable fields.
-    if redact_secrets(value) != value:
+    checked = dict(value)
+    if isinstance(configuration, ExternalTargetConfig):
+        configuration.__post_init__()
+        # These values are validated JSON paths, never credential values.
+        checked.pop("response_mappings", None)
+    if redact_secrets(checked) != checked:
         raise TargetConfigurationError("Raw secrets cannot be stored in target configuration")
     value["version_hash"] = version_hash(value)
     return value
@@ -757,7 +836,7 @@ def _is_private_host(host: str) -> bool:
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return False
-    return not address.is_global or address.is_multicast
+    return bool(not address.is_global or address.is_multicast or address.is_reserved)
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -769,34 +848,77 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def _validate_resolved_destination(endpoint: str, *, force: bool = False) -> tuple[str, ...]:
-    """Resolve and validate every address; the real transport pins one of them."""
-    if config.APP_ENV != "production" and not force:
-        return ()
-    parsed = urlparse(endpoint)
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise TargetConfigurationError("External target destination has no host")
+def _network_controls_required() -> bool:
+    return config.APP_ENV == "production" or config.public_sessions_enabled()
+
+
+def _private_destinations_allowed() -> bool:
+    # Anonymous callers may never opt into the host's private network.
+    return config.ALLOW_PRIVATE_EXTERNAL_TARGETS and not config.public_sessions_enabled()
+
+
+def _validate_endpoint_policy(endpoint: str) -> str:
+    if not isinstance(endpoint, str) or any(character.isspace() for character in endpoint):
+        raise TargetConfigurationError("External endpoint must be a URL without whitespace")
     try:
-        addresses = {
-            str(item[4][0]).split("%")[0]
-            for item in socket.getaddrinfo(
-                host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM
-            )
+        parsed = urlparse(endpoint)
+        host = (parsed.hostname or "").lower()
+        if parsed.port == 0:
+            raise ValueError("Port zero is not a destination")
+    except ValueError as exc:
+        raise TargetConfigurationError("External endpoint must have a valid port") from exc
+    if not host or parsed.username or parsed.password:
+        raise TargetConfigurationError("External target endpoint must have a valid host and no embedded credentials")
+    query = dict(parse_qsl(parsed.query))
+    if parsed.fragment or redact_secrets(query) != query:
+        raise TargetConfigurationError("Endpoint URLs cannot contain fragments or secret query parameters")
+    local_development = _is_loopback_host(host) and not _network_controls_required()
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and local_development):
+        raise TargetConfigurationError("External endpoints must use HTTPS; local HTTP is development-only")
+    if _network_controls_required() and not config.EXTERNAL_TARGET_ALLOWED_HOSTS:
+        raise TargetConfigurationError("Public and production external targets require EXTERNAL_TARGET_ALLOWED_HOSTS")
+    if config.EXTERNAL_TARGET_ALLOWED_HOSTS and host not in config.EXTERNAL_TARGET_ALLOWED_HOSTS:
+        raise TargetConfigurationError("External target host is not in EXTERNAL_TARGET_ALLOWED_HOSTS")
+    if _is_private_host(host) and not local_development and not _private_destinations_allowed():
+        raise TargetConfigurationError("Private-network external targets require explicit operator approval")
+    return host
+
+
+@dataclass(frozen=True)
+class _ResolvedAddress:
+    family: int
+    kind: int
+    protocol: int
+    sockaddr: Any
+
+
+def _validate_resolved_destination(endpoint: str, *, force: bool = False) -> tuple[_ResolvedAddress, ...]:
+    """Enforce network policy for every call, including anonymous public deployments."""
+    host = _validate_endpoint_policy(endpoint)
+    if not _network_controls_required() and not force:
+        return ()
+    try:
+        port = urlparse(endpoint).port or (443 if urlparse(endpoint).scheme == "https" else 80)
+        addresses = tuple(
+            _ResolvedAddress(item[0], item[1], item[2], item[4])
+            for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
             if item and item[4]
-        }
+        )
     except socket.gaierror as exc:
         raise TargetConfigurationError("External target host could not be resolved safely") from exc
     if not addresses:
         raise TargetConfigurationError("External target host did not resolve to an address")
-    local_development = config.APP_ENV != "production" and _is_loopback_host(host)
-    if (
-        not config.ALLOW_PRIVATE_EXTERNAL_TARGETS
-        and not local_development
-        and any(_is_private_host(address) for address in addresses)
-    ):
-        raise TargetConfigurationError("External target resolved to a private or reserved network address")
-    return tuple(sorted(addresses))
+    for address in addresses:
+        try:
+            literal = ipaddress.ip_address(str(address.sockaddr[0]).split("%")[0])
+        except ValueError as exc:
+            raise TargetConfigurationError("External target returned an invalid network address") from exc
+        if address.family not in (socket.AF_INET, socket.AF_INET6):
+            raise TargetConfigurationError("External target returned an unsupported address family")
+        local_development = _is_loopback_host(host) and not _network_controls_required()
+        if not local_development and not _private_destinations_allowed() and _is_private_host(str(literal)):
+            raise TargetConfigurationError("External target resolved to a private or reserved network address")
+    return addresses
 
 
 def _same_origin(expected: str, actual: str) -> bool:
@@ -819,54 +941,108 @@ def _same_origin(expected: str, actual: str) -> bool:
     )
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201, ARG002
+        return None
+
+
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, host: str, port: int, address: str, timeout: float) -> None:
-        self._tls_context = ssl.create_default_context()
-        super().__init__(host, port, timeout=timeout, context=self._tls_context)
-        self._validated_address = address
+    # The stdlib initializes these; its typeshed stubs omit the private fields.
+    _context: ssl.SSLContext
+    _tunnel_host: str | None
+
+    def __init__(self, host: str, *, addresses: tuple[_ResolvedAddress, ...], **kwargs: Any) -> None:
+        super().__init__(host, **kwargs)
+        self._addresses = addresses
 
     def connect(self) -> None:
-        # Keep TLS verification/SNI for the original hostname while connecting to
-        # the validated address. A second hostname lookup could enable rebinding.
-        sock = socket.create_connection((self._validated_address, self.port), timeout=self.timeout)
-        self.sock = self._tls_context.wrap_socket(sock, server_hostname=self.host)
+        if self._tunnel_host:
+            raise OSError("Proxy tunnels are disabled for protected external targets")
+        last_error: OSError | None = None
+        for address in self._addresses:
+            sock = socket.socket(address.family, address.kind, address.protocol)
+            try:
+                sock.settimeout(self.timeout)
+                # Connect directly to the numeric sockaddr already validated above.
+                # socket.create_connection would resolve the hostname a second time.
+                sock.connect(address.sockaddr)
+                self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+                return
+            except OSError as exc:
+                sock.close()
+                last_error = exc
+            except BaseException:
+                sock.close()
+                raise
+        raise last_error or OSError("No validated address was available")
 
 
-class _PinnedResponse:
-    def __init__(self, response: http.client.HTTPResponse, connection: http.client.HTTPConnection) -> None:
-        self._response = response
-        self._connection = connection
-        self.status = response.status
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    _context: ssl.SSLContext | None
 
-    def read(self, size: int) -> bytes:
-        return self._response.read(size)
+    def __init__(self, addresses: tuple[_ResolvedAddress, ...]) -> None:
+        super().__init__()
+        self._addresses = addresses
 
-    def close(self) -> None:
-        self._response.close()
-        self._connection.close()
+    def https_open(self, request):
+        def connection(host: str, **kwargs: Any) -> _PinnedHTTPSConnection:
+            return _PinnedHTTPSConnection(host, addresses=self._addresses, **kwargs)
+
+        return self.do_open(connection, request, context=self._context)
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, *, addresses: tuple[_ResolvedAddress, ...], **kwargs: Any) -> None:
+        super().__init__(host, **kwargs)
+        self._addresses = addresses
+
+    def connect(self) -> None:
+        last_error: OSError | None = None
+        for address in self._addresses:
+            sock = socket.socket(address.family, address.kind, address.protocol)
+            try:
+                sock.settimeout(self.timeout)
+                sock.connect(address.sockaddr)
+                self.sock = sock
+                return
+            except OSError as exc:
+                sock.close()
+                last_error = exc
+        raise last_error or OSError("No validated address was available")
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, addresses: tuple[_ResolvedAddress, ...]) -> None:
+        super().__init__()
+        self._addresses = addresses
+
+    def http_open(self, request):
+        def connection(host: str, **kwargs: Any) -> _PinnedHTTPConnection:
+            return _PinnedHTTPConnection(host, addresses=self._addresses, **kwargs)
+
+        return self.do_open(connection, request)
 
 
 def _secure_urlopen(request: urllib.request.Request, *, timeout: float):
-    parsed = urlparse(request.full_url)
-    address = _validate_resolved_destination(request.full_url, force=True)[0]
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    connection: http.client.HTTPConnection
-    if parsed.scheme == "https":
-        connection = _PinnedHTTPSConnection(parsed.hostname or "", port, address, timeout)
-    else:
-        connection = http.client.HTTPConnection(address, port, timeout=timeout)
-    headers = dict(request.header_items())
-    headers["Host"] = parsed.netloc
-    path = parsed.path or "/"
-    if parsed.query:
-        path += "?" + parsed.query
-    try:
-        # http.client follows neither redirects nor environment proxy settings.
-        connection.request(request.get_method(), path, body=request.data, headers=headers)
-        return _PinnedResponse(connection.getresponse(), connection)
-    except Exception:
-        connection.close()
-        raise
+    if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
+        raise TargetConfigurationError("External assistant calls require a private native workspace")
+    addresses = _validate_resolved_destination(request.full_url, force=True)
+    for name in list(request.headers) + list(request.unredirected_hdrs):
+        if name.lower() in {"host", "proxy-authorization", "proxy-connection"}:
+            request.remove_header(name)
+    request.add_unredirected_header("Host", urlparse(request.full_url).netloc)
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+        _PinnedHTTPSHandler(addresses),
+        _PinnedHTTPHandler(addresses),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _optional_identity(value: Any) -> str | None:
+    # Adapter type and configured defaults are not observed model identities.
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _optional_int(value: Any) -> int | None:
