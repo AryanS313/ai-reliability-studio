@@ -111,6 +111,8 @@ class _PostgresConnection:
 
     def execute(self, sql, parameters):
         self.calls.append((sql, parameters))
+        if "SELECT id FROM eval_results" in sql:
+            return SimpleNamespace(fetchone=lambda: None)
         if "INSERT INTO eval_results" in sql:
             self.result = json.loads(parameters[-1])
         if "SELECT er.result_json" in sql:

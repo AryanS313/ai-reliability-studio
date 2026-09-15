@@ -1,7 +1,7 @@
 [project]
 name = "ai-reliability-studio"
 version = "1.0.0"
-description = "Production-oriented reliability evaluation for AI assistants"
+description = "Design-partner release evaluation for knowledge-grounded support assistants"
 requires-python = ">=3.11,<3.13"
 license = {file = "LICENSE"}
 
@@ -16,6 +16,7 @@ branch = true
 omit = ["src/cli.py"]
 
 [tool.ruff]
+extend-exclude = ["browser_site/.build", "browser_site/public/assets/studio", "browser_runtime/dependencies/cache"]
 line-length = 120
 target-version = "py311"
 

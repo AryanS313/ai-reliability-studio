@@ -21,7 +21,7 @@ from src.security import detect_pii, redact_pii
 from src.utils import keyword_tokens, normalize_text
 
 OUT_OF_SCOPE_SOURCE = "Out of Scope"
-EVALUATOR_VERSION = "deterministic-v7"
+EVALUATOR_VERSION = "deterministic-v8"
 LABEL_SEMANTICS_VERSION = "failure-labels-v3"
 FAILURE_LABEL_SEMANTICS: dict[str, dict[str, Any]] = {
     "privacy_violation": {
@@ -383,7 +383,7 @@ def _subject_head(claim: str) -> str | None:
     if not words:
         return None
     head = _stem_policy_token(words[-1])
-    return None if head in {"i", "we", "you", "assistant", "customer", "they", "it"} else head
+    return None if head in {"i", "we", "you", "customer", "they", "it"} else head
 
 
 def _claim_subjects(claim: str) -> set[str]:
@@ -823,8 +823,15 @@ def _resolve_structured_citation(
     for chunk in retrieved_chunks:
         if chunk_id and str(chunk.get("chunk_id") or chunk.get("id") or "") != chunk_id:
             continue
+        # Native extraction records the same immutable identities under filename
+        # and document_hash; normalize those aliases before checking assertions.
+        identity = {
+            **chunk,
+            "document_id": chunk.get("document_id") or chunk.get("filename"),
+            "document_version": chunk.get("document_version") or chunk.get("document_hash"),
+        }
         if any(
-            citation.get(field) not in (None, "") and str(chunk.get(field)) != str(citation[field])
+            citation.get(field) not in (None, "") and str(identity.get(field)) != str(citation[field])
             for field in ("document_id", "document_version", *locations)
         ):
             continue

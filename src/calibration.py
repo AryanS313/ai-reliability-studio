@@ -75,6 +75,8 @@ def read_calibration_dataset(filename: str, data: bytes) -> pd.DataFrame:
             frame = pd.DataFrame(records)
         else:
             value = json.loads(data.decode("utf-8-sig"))
+            if not isinstance(value, list | dict):
+                raise ValueError("Calibration JSON must contain a list or reviews object.")
             frame = pd.DataFrame(value if isinstance(value, list) else value.get("reviews", []))
     except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise ValueError("Calibration upload could not be parsed safely.") from exc
@@ -170,7 +172,7 @@ def calibrate_evaluators(
         }
     version_bound = bool(evaluator_version and label_semantics_version)
     if not version_bound:
-        limitations.append("Automatic labels lack an explicitly declared evaluator and label-semantics version.")
+        limitations.append("Automatic labels lack explicitly declared evaluator and label-semantics versions.")
     status = (
         "calibrated"
         if version_bound and metrics and all(item["requirements_met"] for item in metrics.values())
@@ -185,6 +187,7 @@ def calibrate_evaluators(
         "evaluator_version": evaluator_version,
         "label_semantics_version": label_semantics_version,
         "reviewed_dataset_hash": version_hash(held_out.to_dict(orient="records")),
+        "missing_launch_labels": sorted(set(DEFAULT_CALIBRATION_LABELS) - set(metrics)),
         "threshold_configuration": asdict(thresholds),
         "requirements": asdict(requirements),
         "evaluators": metrics,
@@ -269,6 +272,43 @@ def run_calibration_workflow(
         dataset_version_id=dataset_version_id,
     )
     return {**result, "calibration_id": calibration_id}
+
+
+def calibration_for_run(result: dict[str, Any], thresholds: EvaluatorThresholdConfiguration) -> dict[str, Any]:
+    """Bind qualifying calibration to this evaluator and its full launch-label scope.
+
+    A content hash detects accidental mutation; it is not proof that a human
+    performed the reviews or that the held-out declaration is independently true.
+    """
+    if result.get("threshold_version") != thresholds.version:
+        raise ValueError("Calibration result threshold version does not match this run's threshold configuration.")
+    if result.get("status") != "calibrated":
+        return result
+    if (
+        result.get("evaluator_version") != EVALUATOR_VERSION
+        or result.get("label_semantics_version") != LABEL_SEMANTICS_VERSION
+    ):
+        raise ValueError("Calibration evaluator or label-semantics version is missing or does not match this run.")
+    content = {key: value for key, value in result.items() if key not in {"calibration_version", "calibration_id"}}
+    if version_hash(content) != result.get("calibration_version"):
+        raise ValueError("Calibration content hash does not match its recorded evidence.")
+    qualifying = {
+        label for label, metric in result.get("evaluators", {}).items() if metric.get("requirements_met") is True
+    }
+    missing = sorted(set(DEFAULT_CALIBRATION_LABELS) - qualifying)
+    if missing:
+        limited = dict(result)
+        limited["status"] = "insufficiently_calibrated"
+        limited["source_calibration_version"] = result.get("calibration_version")
+        limited["limitations"] = [
+            *result.get("limitations", []),
+            f"Launch evaluation is missing qualifying calibration for: {', '.join(missing)}.",
+        ]
+        limited["calibration_version"] = version_hash(
+            {key: value for key, value in limited.items() if key not in {"calibration_version", "calibration_id"}}
+        )
+        return limited
+    return result
 
 
 def _labels(value: Any) -> set[str]:

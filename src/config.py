@@ -16,7 +16,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_RELEASE = "2026.09.08.2"
+APP_RELEASE = "2026.09.16.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -27,6 +27,7 @@ _load_local_environment()
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "ai_reliability_studio.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
+APP_ACCESS_MODE = os.getenv("APP_ACCESS_MODE", "public-demo").lower()
 AUTH_MODE = os.getenv("AUTH_MODE", "single-user").lower()
 PUBLIC_SESSION_TTL_SECONDS = int(os.getenv("PUBLIC_SESSION_TTL_SECONDS", "86400"))
 AUTH_SESSION_MAX_AGE_SECONDS = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "3600"))
@@ -152,7 +153,7 @@ ESCALATION_KEYWORDS = [
 def available_models(api_key: str | None = None, provider: str = "openai") -> list[str]:
     models = ["mock-model"]
     provider = provider.lower()
-    if api_key or api_key_for_provider(provider):
+    if APP_ACCESS_MODE != "public-demo" and (api_key or api_key_for_provider(provider)):
         models.extend(PROVIDER_MODELS.get(provider, []))
     return list(dict.fromkeys([m for m in models if m]))
 
@@ -165,12 +166,17 @@ def api_key_for_provider(provider: str) -> str:
 
 def public_sessions_enabled() -> bool:
     """Explicit anonymous mode; it never weakens the normal production auth mode."""
-    return AUTH_MODE == "public-session"
+    return APP_ACCESS_MODE in {"public-demo", "browser"}
+
+
+def is_browser_runtime() -> bool:
+    """Only actual browser WebAssembly can enable browser-only capabilities."""
+    return APP_ACCESS_MODE == "browser" and sys.platform == "emscripten"
 
 
 def browser_runtime_enabled() -> bool:
     """Compatibility for older modules retained during a Streamlit source update."""
-    return sys.platform == "emscripten"
+    return is_browser_runtime()
 
 
 def provider_for_model(model_name: str) -> str:

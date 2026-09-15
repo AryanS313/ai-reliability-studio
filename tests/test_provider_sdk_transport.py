@@ -17,12 +17,12 @@ from src.targets import FoundationModelConfig, FoundationModelTarget, SecretReso
 
 
 @pytest.fixture(autouse=True)
-def forbid_network_and_select_public_mode(monkeypatch):
+def forbid_network_and_select_private_mode(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("These tests must not open network connections.")
 
     monkeypatch.setattr(socket.socket, "connect", forbidden)
-    monkeypatch.setattr(config, "AUTH_MODE", "public-session")
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "local")
 
 
 def mock_transport(monkeypatch, handler):
@@ -311,7 +311,7 @@ def test_failed_request_records_planned_role_trace_without_claiming_acceptance(m
 
 
 @pytest.mark.parametrize("model,host,path,payload_factory", PROVIDERS)
-def test_public_client_does_not_inherit_owner_sdk_environment(monkeypatch, model, host, path, payload_factory):
+def test_provider_client_does_not_inherit_ambient_sdk_environment(monkeypatch, model, host, path, payload_factory):
     fake_environment = {
         "OPENAI_API_KEY": "owner-openai-key",
         "OPENAI_ORG_ID": "owner-org",
@@ -473,16 +473,16 @@ def test_foundation_adapter_preserves_observed_identity_and_request_metadata(mon
     assert result.metadata["requested_model"] == "gpt-4o-mini"
 
 
-def test_private_openai_keeps_explicit_environment_routing(monkeypatch):
-    monkeypatch.setattr(config, "AUTH_MODE", "single-user")
+def test_private_openai_does_not_inherit_environment_routing(monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "local")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://private-approved.invalid/v1")
     monkeypatch.setenv("OPENAI_ORG_ID", "private-org")
     requests, clients = mock_transport(monkeypatch, lambda request: httpx.Response(200, json=openai_payload()))
     result = llm_client.generate_answer("Question", "Context", "System", "gpt-4o-mini", api_key="private-fixture-key")
     assert result["status"] == ExecutionStatus.PASSED.value
-    assert requests[0].url.host == "private-approved.invalid"
-    assert requests[0].headers["openai-organization"] == "private-org"
-    assert clients[0].trust_env
+    assert requests[0].url.host == "api.openai.com"
+    assert "openai-organization" not in requests[0].headers
+    assert not clients[0].trust_env
 
 
 def test_invalid_empty_provider_response_still_preserves_reported_model(monkeypatch):
@@ -775,3 +775,80 @@ def test_gemini_usage_and_http_error_metadata_survive_saved_execution_trace(monk
     assert traces["error"]["http_status"] == 401
     assert json.loads(traces["error"]["metadata_json"])["retryable"] is False
     assert "sensitive-echo-marker" not in json.dumps(traces)
+
+
+@pytest.mark.parametrize("model,host,path,payload_factory", PROVIDERS)
+@pytest.mark.parametrize("supplied_key", [None, "visitor-fixture-key"])
+def test_public_demo_blocks_real_provider_calls_even_with_credentials(
+    monkeypatch, model, host, path, payload_factory, supplied_key
+):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
+    monkeypatch.setattr(
+        config, "PROVIDER_API_KEYS", {"openai": "owner-key", "anthropic": "owner-key", "gemini": "owner-key"}
+    )
+    requests, clients = mock_transport(monkeypatch, lambda request: httpx.Response(200, json=payload_factory()))
+    result = llm_client.generate_answer("Question", "Context", "System", model, api_key=supplied_key)
+    assert result["status"] == ExecutionStatus.INVALID_RESPONSE.value
+    assert result["error_code"] == "real_provider_disabled_in_public_demo"
+    assert result["model"] is None
+    assert result["metadata"]["quality_score_eligible"] is False
+    assert requests == []
+    assert clients == []
+
+
+@pytest.mark.parametrize("model,host,path,payload_factory", PROVIDERS)
+def test_malformed_provider_payload_is_an_unscored_failure(monkeypatch, model, host, path, payload_factory):
+    requests, clients = mock_transport(
+        monkeypatch,
+        lambda request: httpx.Response(200, content=b"not valid JSON", headers={"content-type": "application/json"}),
+    )
+    result = llm_client.generate_answer("Question", "Context", "System", model, api_key="visitor-fixture-key")
+    assert result["status"] in {ExecutionStatus.FAILED.value, ExecutionStatus.INVALID_RESPONSE.value}
+    assert result["answer"] == ""
+    assert result["metadata"]["quality_score_eligible"] is False
+    assert len(requests) == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("model,host,path,payload_factory", PROVIDERS)
+def test_provider_echoed_runtime_credential_is_discarded_before_scoring(
+    monkeypatch, model, host, path, payload_factory
+):
+    credential = "arbitrary-fixture-credential"
+    payload = payload_factory()
+    if model.startswith("gpt"):
+        payload["choices"][0]["message"]["content"] = f"Provider echoed {credential}"
+    elif model.startswith("gemini"):
+        payload["candidates"][0]["content"]["parts"][0]["text"] = f"Provider echoed {credential}"
+    else:
+        payload["content"][0]["text"] = f"Provider echoed {credential}"
+    mock_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+    result = llm_client.generate_answer("Question", "Context", "System", model, api_key=credential)
+    assert result["status"] == ExecutionStatus.INVALID_RESPONSE.value
+    assert result["error_code"] == "credential_in_provider_response"
+    assert result["metadata"]["quality_score_eligible"] is False
+    assert result["metadata"]["credential_redacted"] is True
+    assert result["answer"] == ""
+    assert credential not in json.dumps(result)
+
+
+@pytest.mark.parametrize("access_mode", ["browser", "unsupported-mode"])
+def test_native_or_unknown_runtime_cannot_bypass_provider_access_boundary(monkeypatch, access_mode):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", access_mode)
+    monkeypatch.setattr(config, "is_browser_runtime", lambda: False)
+    requests, clients = mock_transport(monkeypatch, lambda request: httpx.Response(200, json=openai_payload()))
+    result = llm_client.generate_answer("Question", "Source", "Instructions", "gpt-4o-mini", api_key="fixture-key")
+    assert result["status"] == ExecutionStatus.INVALID_RESPONSE.value
+    assert result["error_code"] == "untrusted_provider_access_mode"
+    assert result["metadata"]["quality_score_eligible"] is False
+    assert requests == [] and clients == []
+
+
+def test_supported_browser_runtime_keeps_explicit_key_provider_path(monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "browser")
+    monkeypatch.setattr(config, "is_browser_runtime", lambda: True)
+    requests, clients = mock_transport(monkeypatch, lambda request: httpx.Response(200, json=openai_payload()))
+    result = llm_client.generate_answer("Question", "Source", "Instructions", "gpt-4o-mini", api_key="fixture-key")
+    assert result["status"] == ExecutionStatus.PASSED.value
+    assert requests[0].url.host == "api.openai.com"
+    assert all(not client.trust_env for client in clients)

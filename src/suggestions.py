@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.aggregation import compare_candidates
+from src.provenance import evidence_frame
+
 FAILURE_SUGGESTIONS = {
-    "Expected Answer Mismatch": "Make the system prompt more specific about using the expected policy language.",
+    "Expected Answer Mismatch": "Compare the answer and reference with the exact source. Confirm any omitted condition with a domain reviewer before revising the prompt or expected behavior.",
     "Source Retrieval Failure": "Improve chunking, increase top_k retrieval, or restructure the source document.",
     "Citation Failure": "Add a mandatory citation rule to the system prompt.",
     "Escalation Failure": "Add explicit escalation rules for this category.",
@@ -18,6 +21,7 @@ FAILURE_SUGGESTIONS = {
     "Harmful or Prohibited Action": "Explicitly refuse prohibited actions and route safety-sensitive cases to the correct reviewer.",
     "Execution Error": "Inspect provider, endpoint, authentication reference, timeout, rate-limit, and response mapping configuration.",
     "Incomplete Answer": "Add more specific answer-format instructions or improve expected-answer coverage.",
+    "Needs Review": "Have a domain reviewer compare the answer with the exact cited passages. Record whether the claim is supported before changing the assistant; unfamiliar wording alone is not proof of a defect.",
     "Latency Issue": "Reduce context size, reduce retrieved chunks, or test a faster model.",
     "Cost Issue": "Reduce prompt length, reduce retrieved chunks, or test a cheaper model.",
     "Passed": "No action required.",
@@ -32,7 +36,7 @@ def suggestion_for_failure(failure_type: str) -> str:
 
 def generate_improved_prompt(
     current_prompt: str,
-    industry: str = "regulated fintech support",
+    industry: str = "customer support",
     failures: pd.DataFrame | None = None,
 ) -> str:
     base = (current_prompt or "You are a helpful support assistant.").strip()
@@ -56,7 +60,7 @@ Rules:
 2. Do not invent policy details, timelines, eligibility decisions, reasons, or guarantees.
 3. Always cite the source document used.
 4. If the context does not clearly answer the question, say: "I do not have enough information in the uploaded documents to answer this confidently."
-5. Escalate questions involving refund disputes, loan approval or rejection, fraud, identity mismatch, legal, compliance, account closure blockers, or final eligibility decisions.
+5. Follow the escalation conditions and destinations in the supplied policies. Escalate missing or conflicting evidence to a human reviewer; do not invent domain-specific escalation rules or authorize account changes and transactions.
 6. Separate document-based facts from recommendations.
 7. Keep answers concise and business-readable.
 8. If escalation is required, clearly write: "Escalation Required: Yes".
@@ -73,7 +77,7 @@ def prompt_change_proposal(current_prompt: str, failures: pd.DataFrame, industry
     return {
         "prompt": generate_improved_prompt(current_prompt, industry, failures),
         "motivated_by_failures": motivations,
-        "generator": "deterministic-template-v2",
+        "generator": "deterministic-template-v3",
         "label": "Deterministic template proposal — requires evaluation before promotion",
     }
 
@@ -92,6 +96,7 @@ def _failure_motivations(failures: pd.DataFrame | None) -> list[str]:
 
 
 def comparison_language(df: pd.DataFrame, *, tolerance_percentage_points: float = 0.5) -> dict:
+    df = evidence_frame(df)
     if df.empty or "prompt_name" not in df:
         return {"status": "missing_data", "summary": "Comparison is unavailable because no candidate data exists."}
     prompts = [str(value) for value in df["prompt_name"].dropna().unique()]
@@ -116,6 +121,11 @@ def comparison_language(df: pd.DataFrame, *, tolerance_percentage_points: float 
         }
     status = df.get("execution_status", pd.Series(["passed"] * len(df), index=df.index)).astype(str)
     quality = df[status == "passed"]
+    if quality.empty or "overall_score" not in quality:
+        return {
+            "status": "missing_data",
+            "summary": "Comparison is unavailable because no successful quality-scored executions exist. Fix execution errors and rerun both revisions.",
+        }
     scores = quality.groupby("prompt_name")["overall_score"].mean().dropna().sort_values(ascending=False)
     if len(scores) < 2:
         return {
@@ -134,6 +144,13 @@ def comparison_language(df: pd.DataFrame, *, tolerance_percentage_points: float 
             "case_counts": {name: len(values) for name, values in case_sets.items()},
         }
     best, second = str(scores.index[0]), str(scores.index[1])
+    comparison = compare_candidates(df[df["prompt_name"] == second], df[df["prompt_name"] == best])
+    if not comparison["ranking_supported"]:
+        return {
+            "status": "inconclusive",
+            "summary": comparison["decision_summary"],
+            "limitations": comparison["limitations"],
+        }
     delta_pp = float((scores.iloc[0] - scores.iloc[1]) * 100)
     infrastructure = {
         str(prompt): int((group.get("execution_status", pd.Series(dtype=str)).astype(str) != "passed").sum())
@@ -149,7 +166,7 @@ def comparison_language(df: pd.DataFrame, *, tolerance_percentage_points: float 
         )
         comparison_status = "near_tie"
     else:
-        summary = f"{best} outperformed {second} by {delta_pp:.1f} percentage points on the same scored cases."
+        summary = f"{best} scored {delta_pp:.1f} percentage points higher than {second} on the same versioned cases and scoring configuration. This observed difference does not establish statistical superiority or release readiness."
         comparison_status = "outperformed"
     if any(infrastructure.values()):
         summary += f" Infrastructure failures were excluded from quality scores: {infrastructure}."
@@ -175,6 +192,8 @@ def run_level_insight_summary(
 
     status = df.get("execution_status", pd.Series(["passed"] * len(df), index=df.index)).astype(str)
     quality = df[status == "passed"]
+    if quality.empty or "overall_score" not in quality:
+        return f"{prompt_line} No answer quality evidence is available. Fix the recorded execution errors and rerun before interpreting quality."
     prompt_scores = quality.groupby("prompt_name")["overall_score"].mean().dropna().sort_values(ascending=False)
 
     metric_cols = {
@@ -189,6 +208,7 @@ def run_level_insight_summary(
         "synthetic_not_comparable",
         "incomparable_evidence",
         "unequal_case_sets",
+        "inconclusive",
     }:
         grouped = quality.groupby("prompt_name")[list(metric_cols)].mean()
         best = prompt_scores.index[0]
@@ -208,11 +228,7 @@ def run_level_insight_summary(
     else:
         top_failure = failures["failure_type"].value_counts().index[0]
         top_category = failures["category"].value_counts().index[0]
-        next_step = (
-            "increase top_k retrieval from 3 to 5 and keep mandatory citation rules enabled"
-            if top_k <= 3
-            else "inspect failed rows and refine the prompt or source documents"
-        )
+        next_step = suggestion_for_failure(str(top_failure))
         failure_line = f"Most remaining failures are {top_failure} in {top_category} questions. Recommended next step: {next_step}."
 
     return f"{prompt_line} {improvement_line} {failure_line}"

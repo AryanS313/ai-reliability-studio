@@ -1,7 +1,7 @@
 """Opt-in sequential execution for the pinned Stlite/Emscripten runtime.
 
-This changes scheduling only. The upstream per-request execution/retry/cache
-method is inherited unchanged. Install before importing the application entry.
+This changes scheduling and abort recovery. The upstream per-request execution,
+retry and cache method is inherited unchanged. Install before the application entry.
 """
 
 from __future__ import annotations
@@ -17,8 +17,10 @@ from src import config
 from src import execution as _execution
 from src.domain import ExecutionStatus
 
-EXECUTION_SOURCE_SHA256 = "400068675b24cdd84706df0d6a6b8a1491fee82b33916d994b5e314443a9d5d2"
-RUNTIME_VERSION = "browser-sequential-v1"
+# Reviewed with tests/test_browser_execution_adapter.py, including the native
+# retry policy, checkpoint ordering, cache semantics and forbidden thread path.
+EXECUTION_SOURCE_SHA256 = "c19a2522ba70960a72df3bf7d6eced3eb3891a8a8b03b3819bfa6fc26645b32f"
+RUNTIME_VERSION = "browser-sequential-v2"
 _NativeEngine = _execution.ExecutionEngine
 
 
@@ -69,7 +71,7 @@ class BrowserSequentialExecutionEngine(_NativeEngine):
         policy = policy or _execution.ExecutionPolicy(max_concurrency=1, max_retries=target.default_retry_count)
         if policy.max_concurrency != 1:
             raise ValueError("Browser execution requires max_concurrency=1; it runs one question at a time.")
-        self.case_limit = config.MAX_DATASET_ROWS if case_limit is None else case_limit
+        self.case_limit: int = config.MAX_DATASET_ROWS if case_limit is None else case_limit
         if isinstance(self.case_limit, bool) or not isinstance(self.case_limit, int) or self.case_limit < 1:
             raise ValueError("The browser case limit must be a positive integer.")
         self.last_records: tuple[_execution.ExecutionRecord, ...] = ()
@@ -131,6 +133,18 @@ class BrowserSequentialExecutionEngine(_NativeEngine):
         except Exception:
             # Keep audit/checkpoint failures fatal instead of calling them target
             # failures or claiming unsaved records were persisted successfully.
+            # The native method checkpoints a returned response before assigning
+            # completed_at. If that callback fails, retain the completed target
+            # call for explicit recovery without claiming its checkpoint saved.
+            for record in records:
+                if (
+                    record.status in _execution.TERMINAL_STATUSES
+                    and record.response is not None
+                    and record.completed_at is None
+                ):
+                    record.completed_at = time.time()
+                    record.metadata["completion_recovered_after_abort"] = True
+                    record.metadata["checkpoint_persistence"] = "unconfirmed"
             raise BrowserRunAborted(self.last_records) from None
         return records
 
@@ -142,8 +156,11 @@ def install_browser_execution() -> dict[str, Any]:
     source_hash = hashlib.sha256(Path(_execution.__file__).read_bytes()).hexdigest()
     if source_hash != EXECUTION_SOURCE_SHA256:
         raise RuntimeError("The execution module changed. Review this browser adapter before enabling it.")
-    _execution.ThreadPoolExecutor = _ForbiddenThreadPool
-    _execution.ExecutionEngine = BrowserSequentialExecutionEngine
+    # Installation deliberately replaces the module's runtime class bindings.
+    vars(_execution).update(
+        ThreadPoolExecutor=_ForbiddenThreadPool,
+        ExecutionEngine=BrowserSequentialExecutionEngine,
+    )
     evaluator = sys.modules.get("src.evaluator")
     if evaluator is not None:
         evaluator.ExecutionEngine = BrowserSequentialExecutionEngine

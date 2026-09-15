@@ -55,6 +55,14 @@ def assemble(source: Path, vendor: Path) -> None:
     # Recompress unchanged members to fit the static host's 25 MiB file limit.
     repacks = []
     lock = json.loads((out / "runtime/pyodide-lock.json").read_text())
+    runtime_metadata = json.loads((vendor / "runtime-packages.json").read_text())
+    for name, override in runtime_metadata.get("security_overrides", {}).items():
+        package = lock["packages"][name]
+        package.update(override)
+        package["sha256"] = digest((out / "runtime" / package["file_name"]).read_bytes())
+        if name == "protobuf":
+            package["imports"] = ["google.protobuf"]
+            package["depends"] = []
     for path in sorted((out / "runtime").iterdir()):
         if path.suffix not in {".whl", ".zip"}:
             continue
@@ -125,8 +133,13 @@ def assemble(source: Path, vendor: Path) -> None:
     anchor = "import importlib\nimportlib.invalidate_caches()"
     assert worker_code.count(anchor) == 1
     hook = """import importlib
+import os
 import sys
 import js
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+from google.protobuf import __version__ as protobuf_version
+from google.protobuf.internal import api_implementation
+assert protobuf_version == "5.29.6" and api_implementation.Type() == "python", "Unexpected browser message runtime"
 sys.path[:0] = ['/app/browser_runtime', '/app', '/providers']
 importlib.invalidate_caches()
 from browser_bootstrap import prepare_browser_provider_runtime

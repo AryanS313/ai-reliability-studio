@@ -8,7 +8,7 @@ the repository and workspace bound to the current execution context.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ import pandas as pd
 from src import config
 from src.domain import WorkspaceContext
 from src.migrations import migrate_sqlite
-from src.storage import Repository, SQLiteRepository, repository_from_url
+from src.storage import EphemeralSQLiteRepository, Repository, repository_from_url
 from src.versioning import version_hash
 
 
@@ -30,18 +30,43 @@ class RequestBinding:
     context: WorkspaceContext
     auth_mode: str
     app_env: str
+    access_mode: str
 
 
 _repository: ContextVar[Any] = ContextVar("studio_repository", default=None)
 _request: ContextVar[RequestBinding | None] = ContextVar("studio_request", default=None)
 
 
-def get_repository():
-    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
-        from src.auth import authenticate_request
+def _validate_access_mode() -> None:
+    from src.auth import AuthenticationError
 
+    mode = config.APP_ACCESS_MODE
+    if mode == "public-demo" or config.is_browser_runtime():
+        return
+    if mode == "browser":
         clear_request()
-        authenticate_request()
+        raise AuthenticationError("Browser access requires a real WebAssembly browser runtime.")
+    if mode == "local" and config.APP_ENV != "production":
+        return
+    if mode == "authenticated" and config.AUTH_MODE in {"proxy", "oidc-proxy"}:
+        return
+    clear_request()
+    if mode == "local":
+        raise AuthenticationError("Local access mode is disabled in production.")
+    if mode == "authenticated":
+        raise AuthenticationError("Authenticated access requires trusted proxy authentication.")
+    raise AuthenticationError("APP_ACCESS_MODE must be public-demo, browser, local, or authenticated.")
+
+
+def initialize_session(state: MutableMapping[str, Any], headers: dict[str, Any] | None = None) -> WorkspaceContext:
+    """Authenticate/rebind the same session owner before every Streamlit rerun."""
+    from src.public_sessions import initialize_session as initialize
+
+    return initialize(state, headers).context
+
+
+def get_repository():
+    _validate_access_mode()
     binding = _valid_binding()
     if binding is not None:
         return binding.repository
@@ -69,7 +94,11 @@ def clear_request() -> None:
 
 def _valid_binding() -> RequestBinding | None:
     binding = _request.get()
-    if binding is not None and (binding.auth_mode, binding.app_env) != (config.AUTH_MODE, config.APP_ENV):
+    if binding is not None and (binding.auth_mode, binding.app_env, binding.access_mode) != (
+        config.AUTH_MODE,
+        config.APP_ENV,
+        config.APP_ACCESS_MODE,
+    ):
         clear_request()
         return None
     return binding
@@ -82,12 +111,11 @@ def bind_context(repository: Repository, context: WorkspaceContext) -> RequestBi
     Workers must receive that pair explicitly and use request_scope; a new thread
     intentionally inherits neither the previous request nor its database.
     """
-    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
-        from src.auth import authenticate_request
-
-        authenticate_request()
+    _validate_access_mode()
+    if config.public_sessions_enabled() and not isinstance(repository, EphemeralSQLiteRepository):
+        raise PermissionError("Anonymous workspaces require in-memory session storage.")
     repository.authorize(context)
-    binding = RequestBinding(repository, context, config.AUTH_MODE, config.APP_ENV)
+    binding = RequestBinding(repository, context, config.AUTH_MODE, config.APP_ENV, config.APP_ACCESS_MODE)
     _request.set(binding)
     return binding
 
@@ -107,9 +135,7 @@ def current_context(headers: dict[str, Any] | None = None) -> WorkspaceContext:
 
     # Check this even for an existing binding; production must never inherit the
     # permissive development single-user path.
-    if config.AUTH_MODE == "single-user" and config.APP_ENV == "production":
-        clear_request()
-        authenticate_request(headers)
+    _validate_access_mode()
     binding = _valid_binding()
     if config.public_sessions_enabled():
         if binding is None:
@@ -128,17 +154,17 @@ def current_context(headers: dict[str, Any] | None = None) -> WorkspaceContext:
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     if config.public_sessions_enabled():
         repository = get_repository()
-        if not isinstance(repository, SQLiteRepository):
-            raise RuntimeError("Public sessions require private SQLite storage.")
-        if db_path is not None and Path(db_path).resolve() != repository.path.resolve():
+        if not isinstance(repository, EphemeralSQLiteRepository):
+            raise PermissionError("Anonymous workspaces require in-memory session storage.")
+        if db_path is not None:
             raise PermissionError("Public sessions cannot connect to another database.")
-        path = repository.path
-    else:
-        path = Path(db_path or config.DATABASE_PATH)
+        return repository.raw_connection()
+    _validate_access_mode()
+    path = Path(db_path or config.DATABASE_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    migrate_sqlite(conn)
     return conn
 
 

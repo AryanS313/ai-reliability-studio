@@ -19,6 +19,7 @@ from src.targets import SecretResolver, TargetConfigurationError
 
 @pytest.fixture
 def public_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
     monkeypatch.setattr(config, "AUTH_MODE", "public-session")
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(config, "PUBLIC_SESSION_TTL_SECONDS", 86400)
@@ -46,7 +47,8 @@ def test_public_access_requires_explicit_binding_and_never_opens_configured_db(p
     state, session = public_mode()
     assert session.ephemeral and "Export" in session.notice
     assert not config.DATABASE_PATH.exists()
-    assert session.repository.path.parent.stat().st_mode & 0o777 == 0o700
+    assert str(session.repository.path) == ":memory:"
+    assert list(config.DATABASE_PATH.parent.iterdir()) == []
     with database.connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0] == 1
     with pytest.raises(PermissionError, match="another database"):
@@ -63,7 +65,7 @@ def test_rerun_rebinds_own_repository_and_preserves_existing_session(public_mode
     _, second = public_mode()
     database.save_project({"name": "Second private work"})
     assert first.context != second.context
-    assert first.repository.path != second.repository.path
+    assert first.repository is not second.repository
     again = initialize_session(first_state, {})
     assert not again.new_session
     assert database.get_repository() is first.repository
@@ -123,9 +125,11 @@ def test_explicit_delete_erases_only_own_files_and_session_keys(public_mode):
     _, second = public_mode()
     database.save_project({"name": "Keep this"})
     first_state["provider_api_keys"] = {"openai": "private-session-key"}
-    first_directory = first.repository.path.parent
+    first_repository = first.repository
     end_public_session(first_state)
-    assert first_state == {} and not first_directory.exists()
+    assert first_state == {}
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        first_repository.raw_connection().execute("SELECT 1")
     assert second.repository.list_projects(second.context)[0]["name"] == "Keep this"
 
 
@@ -135,7 +139,8 @@ def test_idle_expiry_removes_data_and_rerun_starts_fresh(public_mode, monkeypatc
     state["provider_api_keys"] = {"openai": "expired-key"}
     monkeypatch.setattr(config, "PUBLIC_SESSION_TTL_SECONDS", 10)
     assert cleanup_expired_sessions(now=state["_studio_private_session"].last_used + 11) >= 1
-    assert not first.repository.path.parent.exists()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        first.repository.raw_connection().execute("SELECT 1")
     second = initialize_session(state, {})
     assert second.new_session and second.context != first.context
     assert "provider_api_keys" not in state
@@ -166,7 +171,7 @@ def test_public_session_cannot_implicitly_use_server_provider_or_target_keys(pub
     monkeypatch.setenv("PRIVATE_TARGET_KEY", "server-target-key")
     assert config.api_key_for_provider("openai") == ""
     assert config.available_models(provider="openai") == ["mock-model"]
-    assert len(config.available_models("visitor-key", "openai")) > 1
+    assert config.available_models("visitor-key", "openai") == ["mock-model"]
     for supplied in (None, {"PRIVATE_TARGET_KEY": ""}):
         with pytest.raises(TargetConfigurationError, match="not configured"):
             SecretResolver(supplied).resolve("secret://PRIVATE_TARGET_KEY")
@@ -192,6 +197,7 @@ def test_production_single_user_facade_and_hook_refuse_even_previously_bound_con
 
 
 def test_authenticated_requests_never_inherit_another_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "authenticated")
     monkeypatch.setattr(config, "AUTH_MODE", "proxy")
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(config, "AUTH_REQUIRE_ISSUED_AT", False)
@@ -234,6 +240,7 @@ def test_an_existing_configured_database_is_untouched(public_mode):
 
 
 def test_reauthenticated_identity_switch_discards_previous_ui_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "authenticated")
     monkeypatch.setattr(config, "AUTH_MODE", "proxy")
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(config, "AUTH_REQUIRE_ISSUED_AT", False)
@@ -243,6 +250,12 @@ def test_reauthenticated_identity_switch_discards_previous_ui_data(tmp_path, mon
     second = repository.create_workspace("second@example.com", "Second")
     database.set_repository(repository)
     state = {"workspace_context": first, "documents": ["first visitor data"], "provider_api_keys": {"openai": "key"}}
+    with pytest.raises(AuthenticationError, match="identity changed"):
+        initialize_session(
+            state,
+            {"x-auth-subject": "email:second@example.com", "x-auth-email": "second@example.com"},
+        )
+    assert state == {}
     result = initialize_session(
         state,
         {"x-auth-subject": "email:second@example.com", "x-auth-email": "second@example.com"},

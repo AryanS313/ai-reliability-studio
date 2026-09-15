@@ -306,3 +306,25 @@ def test_explicit_required_rubric_item_cannot_be_averaged_away():
     result = evaluate(expected, expected, rubric={"required": ["case identifier"]})
     assert result["expected_answer_match_score"] < 0.7
     assert result["failure_type"] != "Passed"
+
+
+def test_native_chunk_identity_aliases_resolve_without_accepting_wrong_hash():
+    from src.chunker import chunk_documents
+    from src.targets import SyntheticMockTarget
+
+    expected = "Accounts are allowed at most 32 seats."
+    chunks = chunk_documents([{"filename": "operating_rules.md", "text": expected}])
+    response = SyntheticMockTarget().execute(
+        {"question": "How many seats?", "expected_answers": [expected], "retrieved_chunks": chunks}
+    )
+    assessment = validate_citations(response.answer, chunks, provided_citations=list(response.citations))
+    assert assessment.supports_claim is True
+    wrong = {**response.citations[0], "document_version": "wrong-hash"}
+    assert validate_citations(expected, chunks, provided_citations=[wrong]).supports_claim is False
+
+
+def test_human_review_requirement_does_not_conflict_with_assistant_authority_limit():
+    expected = "Human review is required before communicating final eligibility decisions for loans, KYC, refunds, account closure blockers, or compliance cases."
+    authority = "The assistant may explain closure blockers from this policy, but it must not confirm final closure eligibility."
+    assert contradiction_details(authority, expected) == []
+    assert assess_claims(expected, [chunk(expected), chunk(authority, "authority")])[0].status == ClaimStatus.SUPPORTED

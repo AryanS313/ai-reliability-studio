@@ -37,7 +37,12 @@ class LocalTfidfEmbedder(EmbeddingProvider):
 
     def fit_transform(self, texts: list[str]):
         if self.vectorizer is not None:
-            return self.vectorizer.fit_transform(texts)
+            matrix = self.vectorizer.fit_transform(texts)
+            # Older scikit-learn retains discarded vocabulary for introspection.
+            # Retrieval never needs it; remove this unnecessary copy of input data.
+            if hasattr(self.vectorizer, "stop_words_"):
+                delattr(self.vectorizer, "stop_words_")
+            return matrix
         return [_counter(text) for text in texts]
 
     def transform(self, texts: list[str]):

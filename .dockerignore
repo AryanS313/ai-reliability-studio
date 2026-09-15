@@ -4,6 +4,8 @@
 .streamlit/*
 !.streamlit/config.toml
 .venv
+.venv-*
+.local-verification
 venv
 __pycache__
 **/__pycache__

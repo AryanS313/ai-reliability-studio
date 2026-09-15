@@ -18,15 +18,17 @@ from src.targets import ExternalHTTPTarget, ExternalTargetConfig, TargetConfigur
 
 @pytest.fixture(autouse=True)
 def public_environment(monkeypatch):
-    monkeypatch.setattr(config, "AUTH_MODE", "public-session")
-    monkeypatch.setattr(config, "APP_ENV", "public-demo")
-    monkeypatch.setattr(config, "ALLOW_PRIVATE_EXTERNAL_TARGETS", True)
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "authenticated")
+    monkeypatch.setattr(config, "AUTH_MODE", "proxy")
+    monkeypatch.setattr(config, "APP_ENV", "production")
+    monkeypatch.setattr(config, "ALLOW_PRIVATE_EXTERNAL_TARGETS", False)
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ("assistant.example.test",))
     monkeypatch.setattr(socket, "getaddrinfo", MagicMock(side_effect=AssertionError("DNS must be stubbed explicitly")))
 
 
 @pytest.mark.parametrize("environment", ["public-demo", "development", "production"])
 def test_anonymous_mode_requires_https_and_host_allowlist_in_every_environment(monkeypatch, environment):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
     monkeypatch.setattr(config, "APP_ENV", environment)
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ())
     with pytest.raises(TargetConfigurationError, match="HTTPS"):
@@ -58,6 +60,8 @@ def test_invalid_ports_are_configuration_errors(port):
     ],
 )
 def test_anonymous_mode_rejects_nonpublic_literals_even_when_private_access_flag_is_set(monkeypatch, host):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "public-demo")
+    monkeypatch.setattr(config, "ALLOW_PRIVATE_EXTERNAL_TARGETS", True)
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", (host.strip("[]"),))
     with pytest.raises(TargetConfigurationError, match="Private-network"):
         ExternalTargetConfig(name="private", endpoint=f"https://{host}")
@@ -101,7 +105,7 @@ class Response:
 
 
 @pytest.mark.parametrize("operation", ["execute", "health_check"])
-def test_allowlisted_public_destination_works_with_stubbed_network(monkeypatch, operation):
+def test_allowlisted_private_workspace_destination_works_with_stubbed_network(monkeypatch, operation):
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
     )
@@ -134,6 +138,7 @@ def test_redirected_responses_are_rejected_including_private_ipv6(monkeypatch, o
 
 
 def test_single_user_development_can_still_use_local_test_servers(monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "local")
     monkeypatch.setattr(config, "AUTH_MODE", "single-user")
     monkeypatch.setattr(config, "APP_ENV", "development")
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ())

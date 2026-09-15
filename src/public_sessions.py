@@ -1,21 +1,17 @@
-"""Private, temporary workspaces for an explicitly anonymous public application.
+"""Memory-only anonymous workspaces, rebound before every Streamlit rerun.
 
-The UI must call initialize_session on EVERY rerun before any database operation.
-Keep its server-created session object in Streamlit session_state, never in a URL,
-cookie, shared cache, or client-supplied identifier. Exported files are the durable
-copy: temporary work disappears after idle expiry, explicit deletion, session
-garbage collection, or server restart. This module never opens the configured DB.
+Public demos accept fictional sample data. A verified WebAssembly browser may
+review custom answers and use session-supplied provider keys. No anonymous mode
+opens the configured DB. Memory expires on idle cleanup, reset or process exit.
 """
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 from weakref import WeakSet
@@ -23,7 +19,7 @@ from weakref import WeakSet
 from src import config, database
 from src.auth import authenticate_request
 from src.domain import Role, WorkspaceContext
-from src.storage import Repository, SQLiteRepository, utcnow
+from src.storage import EphemeralSQLiteRepository, Repository, utcnow
 
 _SESSION_KEY = "_studio_private_session"
 _sessions: WeakSet[PublicSession] = WeakSet()
@@ -41,8 +37,7 @@ class SessionInitialization:
 
 class PublicSession:
     def __init__(self, *, temporary_root: Path | None = None) -> None:
-        self._directory = TemporaryDirectory(prefix="studio-public-session-", dir=temporary_root)
-        self.repository = SQLiteRepository(Path(self._directory.name) / "workspace.sqlite3")
+        self.repository = EphemeralSQLiteRepository()
         self.repository.migrate()
         # Session-specific IDs prevent a stale context from another private DB
         # accidentally matching its independently allocated integer IDs.
@@ -74,20 +69,15 @@ class PublicSession:
             _sessions.add(self)
 
     def close(self) -> None:
-        """Delete this session's private directory only; never the configured DB."""
+        """Close this session's memory database only; never the configured DB."""
         with _sessions_lock:
-            self._directory.cleanup()
+            self.repository.close()
             self.closed = True
             _sessions.discard(self)
 
 
 def cleanup_expired_sessions(*, now: float | None = None) -> int:
-    """Delete idle temporary sessions when the app next receives a request.
-
-    TemporaryDirectory also cleans up when the server releases session state or
-    exits normally. An abruptly killed host may leave files for its OS temporary
-    storage cleanup; these cannot be resumed by a new process or public visitor.
-    """
+    """Close idle memory databases when the application next receives a request."""
     ttl = config.PUBLIC_SESSION_TTL_SECONDS
     if ttl <= 0:
         raise ValueError("PUBLIC_SESSION_TTL_SECONDS must be positive.")
@@ -116,19 +106,20 @@ def initialize_session(
     *,
     temporary_root: Path | None = None,
 ) -> SessionInitialization:
-    """Authenticate or create/rebind a private session before every UI rerun.
-
-    AUTH_MODE=public-session is the only anonymous opt-in. Other modes retain
-    authenticate_request's fail-closed behavior, including production refusal
-    of single-user authentication. The returned notice belongs beside export.
-    """
+    """Authenticate or rebind an isolated memory workspace before every rerun."""
     database.clear_request()
+    try:
+        database._validate_access_mode()
+    except PermissionError:
+        state.clear()
+        raise
     if not config.public_sessions_enabled():
         previous = state.pop(_SESSION_KEY, None)
         if isinstance(previous, PublicSession):
             previous.close()
             state.clear()
         try:
+            database._validate_access_mode()
             authenticate_request(request_headers)
             database.init_db()
             context = database.current_context(request_headers)
@@ -138,6 +129,10 @@ def initialize_session(
         previous_context = state.get("workspace_context")
         if previous_context is not None and previous_context != context:
             state.clear()
+            database.clear_request()
+            from src.auth import AuthenticationError
+
+            raise AuthenticationError("The workspace identity changed. Reload to begin a clean session.")
         state["workspace_context"] = context
         return SessionInitialization(database.get_repository(), context, False, "")
 
@@ -159,9 +154,9 @@ def initialize_session(
     notice = (
         f"Your workspace is private to this browser session and temporary. "
         f"It expires after {hours:g} hours of inactivity or a server restart. "
-        "Export your work before leaving. Provider keys must be supplied in this session."
+        "This public demo accepts fictional samples only. Export results before leaving."
     )
-    if sys.platform == "emscripten":
+    if config.is_browser_runtime():
         notice = (
             "Your workspace stays in this tab's memory. Closing or reloading the tab clears it, "
             f"as does returning after {hours:g} hours of inactivity. "

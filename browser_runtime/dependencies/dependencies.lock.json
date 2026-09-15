@@ -313,14 +313,17 @@
       "url": "https://raw.githubusercontent.com/pyodide/pyodide/0.26.4/LICENSE"
     },
     {
-      "bytes": 494179,
-      "hash_origin": "Official Pyodide 0.26.4 lock",
+      "bytes": 134899,
+      "filename": "jinja2-3.1.6-py3-none-any.whl",
+      "hash_origin": "PyPI release JSON",
       "id": "pyodide:Jinja2-3.1.3-py3-none-any.whl",
+      "metadata_sha256": "1bc757d7065f3e67d3a49e72ebc731d0774055575732592eede9820c136329cc",
+      "metadata_url": "https://pypi.org/pypi/jinja2/3.1.6/json",
       "output": "runtime/Jinja2-3.1.3-py3-none-any.whl",
       "package": "jinja2",
-      "sha256": "70c6b83ede9d26f8ed18a287526939de2592747695be0200d26be740547ffe99",
-      "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/Jinja2-3.1.3-py3-none-any.whl",
-      "version": "3.1.3"
+      "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+      "url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+      "version": "3.1.6"
     },
     {
       "bytes": 31671,
@@ -513,14 +516,17 @@
       "version": "10.2.0"
     },
     {
-      "bytes": 945072,
-      "hash_origin": "Official Pyodide 0.26.4 lock",
+      "bytes": 173126,
+      "filename": "protobuf-5.29.6-py3-none-any.whl",
+      "hash_origin": "PyPI release JSON",
       "id": "pyodide:protobuf-4.24.4-cp312-cp312-pyodide_2024_0_wasm32.whl",
-      "output": "runtime/protobuf-4.24.4-cp312-cp312-pyodide_2024_0_wasm32.whl",
+      "metadata_sha256": "a73f1c09dd111f6d46c751901fd0f5d7b2ac7d3a449e1e82711d42c78c4d2f03",
+      "metadata_url": "https://pypi.org/pypi/protobuf/5.29.6/json",
+      "output": "runtime/protobuf-5.29.6-py3-none-any.whl",
       "package": "protobuf",
-      "sha256": "9b3640fd3192505a6e2e7c50d1dbc1b280968bf4ea6dec9eb6db0fbb280a53a5",
-      "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/protobuf-4.24.4-cp312-cp312-pyodide_2024_0_wasm32.whl",
-      "version": "4.24.4"
+      "sha256": "6b9edb641441b2da9fa8f428760fc136a49cf97a52076010cf22a2ff73438a86",
+      "url": "https://files.pythonhosted.org/packages/5a/cb/e3065b447186cb70aa65acc70c86baf482d82bf75625bf5a2c4f6919c6a3/protobuf-5.29.6-py3-none-any.whl",
+      "version": "5.29.6"
     },
     {
       "bytes": 106335,
@@ -661,14 +667,17 @@
       "version": "1.16.0"
     },
     {
-      "bytes": 141413,
-      "hash_origin": "Official Pyodide 0.26.4 lock",
+      "bytes": 37304,
+      "filename": "soupsieve-2.8.4-py3-none-any.whl",
+      "hash_origin": "PyPI release JSON",
       "id": "pyodide:soupsieve-2.5-py3-none-any.whl",
+      "metadata_sha256": "b040179b8a5d578d524ffa44fd6c94248bffa575fb88779223e734ef81969314",
+      "metadata_url": "https://pypi.org/pypi/soupsieve/2.8.4/json",
       "output": "runtime/soupsieve-2.5-py3-none-any.whl",
       "package": "soupsieve",
-      "sha256": "668c7e23cec5b553b45141498d03a874044727727f51300ed3b6c1cc15acd627",
-      "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/soupsieve-2.5-py3-none-any.whl",
-      "version": "2.5"
+      "sha256": "e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65",
+      "url": "https://files.pythonhosted.org/packages/5e/f5/0c41cb68dcae6b7de4fac4188a3a9589e21fb31df21ea3a2e888db95e6c9/soupsieve-2.8.4-py3-none-any.whl",
+      "version": "2.8.4"
     },
     {
       "bytes": 1454039,
@@ -801,24 +810,30 @@
       "version": "5.24.1"
     },
     {
-      "bytes": 19863,
-      "hash_origin": "Previously verified PyPI release JSON",
+      "bytes": 22101,
+      "filename": "python_dotenv-1.2.2-py3-none-any.whl",
+      "hash_origin": "PyPI release JSON",
       "id": "app-wheel:python-dotenv",
-      "output": "wheels/python_dotenv-1.0.1-py3-none-any.whl",
+      "metadata_sha256": "bc19d70685f539c96e69797dc96923c09735e2babe80dd3c2c7f1bbaffedb0a1",
+      "metadata_url": "https://pypi.org/pypi/python-dotenv/1.2.2/json",
+      "output": "wheels/python_dotenv-1.2.2-py3-none-any.whl",
       "package": "python-dotenv",
-      "sha256": "f7b63ef50f1b690dddf550d03497b66d609393b40b564ed0d674909a68ebf16a",
-      "url": "https://files.pythonhosted.org/packages/6a/3e/b68c118422ec867fa7ab88444e1274aa40681c606d59ac27de5a5588f082/python_dotenv-1.0.1-py3-none-any.whl",
-      "version": "1.0.1"
+      "sha256": "1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a",
+      "url": "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl",
+      "version": "1.2.2"
     },
     {
-      "bytes": 297976,
-      "hash_origin": "Previously verified PyPI release JSON",
+      "bytes": 394327,
+      "filename": "pypdf-6.18.1-py3-none-any.whl",
+      "hash_origin": "PyPI release JSON",
       "id": "app-wheel:pypdf",
-      "output": "wheels/pypdf-5.1.0-py3-none-any.whl",
+      "metadata_sha256": "8714d2ea6c4eaa68ecad94d2fac6bb2902a575e51cb6c6ff122f26e4ff82609c",
+      "metadata_url": "https://pypi.org/pypi/pypdf/6.18.1/json",
+      "output": "wheels/pypdf-6.18.1-py3-none-any.whl",
       "package": "pypdf",
-      "sha256": "3bd4f503f4ebc58bae40d81e81a9176c400cbbac2ba2d877367595fb524dfdfc",
-      "url": "https://files.pythonhosted.org/packages/04/fc/6f52588ac1cb4400a7804ef88d0d4e00cfe57a7ac6793ec3b00de5a8758b/pypdf-5.1.0-py3-none-any.whl",
-      "version": "5.1.0"
+      "sha256": "ee93a2665670ecf57ee81d197a4ca548f3dc15f9cefc56e59b8140866aaa3de5",
+      "url": "https://files.pythonhosted.org/packages/58/13/645df3995075112cb3cce15e8797c205f0f88fb50acc11012b84b071bc22/pypdf-6.18.1-py3-none-any.whl",
+      "version": "6.18.1"
     },
     {
       "bytes": 244315,
@@ -3451,8 +3466,8 @@
   "runtime": {
     "app_wheels": [
       "wheels/plotly-5.24.1-py3-none-any.whl",
-      "wheels/python_dotenv-1.0.1-py3-none-any.whl",
-      "wheels/pypdf-5.1.0-py3-none-any.whl",
+      "wheels/python_dotenv-1.2.2-py3-none-any.whl",
+      "wheels/pypdf-6.18.1-py3-none-any.whl",
       "wheels/python_docx-1.1.2-py3-none-any.whl",
       "wheels/striprtf-0.0.29-py3-none-any.whl",
       "wheels/openpyxl-3.1.5-py2.py3-none-any.whl",
@@ -3485,7 +3500,7 @@
       "pydantic",
       "cryptography"
     ],
-    "protobuf_policy_v2": "Only Pyodide protobuf 4.24.4; no google/protobuf in provider zip",
+    "protobuf_policy_v2": "Pure-Python protobuf 5.29.6 in runtime before Streamlit import; no google/protobuf namespace in provider zip",
     "provider_candidate": "v2; must pass separate browser validation before release",
     "pyodide": {
       "abi_version": "2024_0",
@@ -3493,6 +3508,20 @@
       "platform": "emscripten_3_1_58",
       "python": "3.12.1",
       "version": "0.26.4"
+    },
+    "security_overrides": {
+      "jinja2": {
+        "file_name": "Jinja2-3.1.3-py3-none-any.whl",
+        "version": "3.1.6"
+      },
+      "protobuf": {
+        "file_name": "protobuf-5.29.6-py3-none-any.whl",
+        "version": "5.29.6"
+      },
+      "soupsieve": {
+        "file_name": "soupsieve-2.5-py3-none-any.whl",
+        "version": "2.8.4"
+      }
     },
     "stdlib_files": [
       "pyodide.mjs",

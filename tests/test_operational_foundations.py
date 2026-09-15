@@ -18,6 +18,17 @@ from src.storage import SQLiteRepository
 from src.suggestions import comparison_language, prompt_change_proposal, run_level_insight_summary
 
 
+def test_failure_explanation_uses_recorded_relationship_without_claiming_contradiction():
+    detail = failure_presentation(
+        {
+            "failure_type": "Expected Answer Mismatch",
+            "score_explanation": {"correctness": {"relationship": {"classification": "expected_answer_mismatch"}}},
+        }
+    )
+    assert "without a proven contradiction" in detail["why_failed"]
+    assert "review both against the source" in detail["why_failed"]
+
+
 def _result_rows() -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -154,7 +165,7 @@ def test_reports_redact_secrets_and_pii_and_charts_separate_candidates():
         assert "person@example.com" not in report
         assert "sk-secret-value-123456" not in report
     payload = json.loads(json_value)
-    assert payload["schema_version"] == "2.0"
+    assert payload["schema_version"] == "2.1"
     assert payload["metadata"]["evidence_classification"] == "synthetic"
     assert payload["metadata"]["execution_counts"]["total_executions"] == 2
     assert "Candidate verdicts" in html_value
@@ -229,7 +240,8 @@ def test_run_completion_wording_and_layered_failure_presentation_are_safe():
     assert "person@example.com" not in rendered
     assert "sk-secret-value-123456" not in rendered
     assert "top-secret-token-value" not in rendered
-    assert detail["why_failed"].startswith("Labels:")
+    assert "private information" in detail["why_failed"].lower()
+    assert "Reason codes:" not in detail["why_failed"]
     assert detail["limitations"]
 
 
@@ -290,7 +302,13 @@ def test_prompt_proposals_are_failure_motivated_and_never_self_promote():
 
 
 def test_comparison_language_handles_ties_unequal_cases_and_evidence_classes():
-    rows = _result_rows().assign(target_type="foundation_model")
+    rows = _result_rows().assign(
+        target_type="foundation_model",
+        dataset_version="d1",
+        evaluator_version="e1",
+        threshold_version="t1",
+        evaluation_configuration_version="c1",
+    )
     rows["overall_score"] = 0.8
     tied = comparison_language(rows)
     assert tied["status"] == "tie"

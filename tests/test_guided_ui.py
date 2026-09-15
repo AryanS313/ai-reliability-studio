@@ -14,9 +14,37 @@ from src.saved_responses import compare_response_reviews
 from src.ui_workflows import evaluate_review_workspace, read_review_workspace, sample_review_workspace
 
 
+def prepare_private_project(app):
+    session = app.session_state["_studio_private_session"]
+    project = {"name": "Guided review fixture"}
+    project_id = session.repository.create_project(session.context, project)
+    app.session_state["project_id"] = project_id
+    app.session_state["project"] = project
+    app.session_state["privacy_acknowledged"] = True
+    app.run(timeout=30)
+    assert not app.exception
+
+
+def navigate(app, page):
+    aliases = {
+        "Overview": "Start",
+        "Project Setup": "Prepare",
+        "Target Setup": "Connect",
+        "Run Evaluation": "Evaluate",
+        "Results Dashboard": "Review",
+        "Run History / Comparison": "History",
+    }
+    if page in aliases:
+        return app.radio(key="navigation").set_value(aliases[page]).run(timeout=30)
+    return app.selectbox(key="advanced_tool").set_value(page).run(timeout=30)
+
+
 @pytest.fixture
 def private_ui(monkeypatch):
     monkeypatch.setattr(config, "AUTH_MODE", "public-session")
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "browser")
+    monkeypatch.setattr(config, "is_browser_runtime", lambda: True)
+    monkeypatch.setattr(config, "browser_runtime_enabled", lambda: True)
     monkeypatch.setattr(config, "APP_ENV", "development")
     monkeypatch.setattr(config, "PUBLIC_SESSION_TTL_SECONDS", 3600)
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ())
@@ -34,9 +62,10 @@ def private_ui(monkeypatch):
     apps = []
 
     def create():
-        app = AppTest.from_file("app.py").run(timeout=30)
+        app = AppTest.from_file(config.ROOT_DIR / "app.py").run(timeout=30)
         assert not app.exception
         apps.append(app)
+        prepare_private_project(app)
         return app
 
     yield create
@@ -58,12 +87,45 @@ def save_visible_review(app, decision, note):
     assert not app.exception
 
 
+def test_primary_sample_uses_browser_compatible_single_execution_policy(private_ui, monkeypatch):
+    from src import evaluator
+
+    run_evaluation = evaluator.run_evaluation
+    observed_concurrency = []
+
+    def checked_run(*args, **kwargs):
+        # The browser adapter rejects a native default of four. Assert the
+        # application's explicit choice, then run the actual sample evaluator.
+        observed_concurrency.append(kwargs.get("max_concurrency"))
+        assert kwargs.get("max_concurrency") == 1
+        return run_evaluation(*args, **kwargs)
+
+    monkeypatch.setattr(evaluator, "run_evaluation", checked_run)
+    app = private_ui()
+    next(button for button in app.button if button.label == "Try the sample review").click().run(timeout=30)
+    assert not app.exception
+    assert observed_concurrency == [1]
+    results = app.session_state["last_results"]
+    assert len(results) == 32
+    assert results["target_type"].eq("synthetic_mock").all()
+    assert results["manifest"].map(lambda value: value["target"]["execution_policy"]["max_concurrency"]).eq(1).all()
+    assert any("no launch verdict" in warning.value for warning in app.warning)
+    assert next(metric for metric in app.metric if metric.label == "Execution errors").value == "3"
+    assert any(
+        "3 simulated connection failures are included in this sample" in error.value
+        and "excluded from quality averages" in error.value
+        and "No external calls were made" in error.value
+        for error in app.error
+    )
+    assert all("Fix connection or provider errors" not in error.value for error in app.error)
+
+
 def test_sample_can_be_reviewed_and_retested_without_provider_calls(private_ui):
     app = private_ui()
-    assert {"Try sample", "Review saved answers", "Evaluate live assistant"}.issubset(
+    assert {"Try a saved-answer example", "Review saved answers", "Evaluate live assistant"}.issubset(
         {button.label for button in app.button}
     )
-    app.button(key="start_sample").click().run(timeout=30)
+    app.button(key="start_saved_sample").click().run(timeout=30)
     assert not app.exception
     assert app.session_state["offline_baseline"]["review_status"].eq("pending").all()
     assert app.session_state["offline_baseline"]["review_decision"].isna().all()
@@ -117,30 +179,50 @@ def test_sample_can_be_reviewed_and_retested_without_provider_calls(private_ui):
     assert compare_response_reviews(restored_baseline, restored_candidate)["counts"] == {"resolved": 2}
 
 
-def test_pasted_inputs_import_and_mismatch_is_explained(private_ui):
+def test_uploaded_inputs_import_and_mismatch_is_explained(private_ui, monkeypatch):
+    import streamlit as st
+
     app = private_ui()
     app.button(key="start_saved").click().run(timeout=30)
-    app.radio(key="saved_input_method").set_value("Paste JSON").run(timeout=30)
     sample = sample_review_workspace()
-    app.text_area(key="saved_sources_json").set_value(json.dumps(sample["sources"]))
-    app.text_area(key="saved_questions_json").set_value(json.dumps(sample["dataset"]))
-    app.text_area(key="saved_answers_json").set_value(json.dumps(sample["baseline"]["responses"][:-1]))
+    answers = list(sample["baseline"]["responses"][:-1])
+    original_uploader = st.file_uploader
+
+    def file(name, content):
+        value = BytesIO(json.dumps(content).encode())
+        value.name = name
+        return value
+
+    def uploaded(*args, **kwargs):
+        key = kwargs.get("key")
+        if key == "saved_sources_upload":
+            return [file("sources.json", sample["sources"])]
+        if key == "saved_questions_upload":
+            return file("questions.json", sample["dataset"])
+        if key == "saved_answers_upload":
+            return file("answers.json", answers)
+        return original_uploader(*args, **kwargs)
+
+    from streamlit.delta_generator import DeltaGenerator
+
+    monkeypatch.setattr(st, "file_uploader", uploaded)
+    monkeypatch.setattr(DeltaGenerator, "file_uploader", lambda self, *args, **kwargs: uploaded(*args, **kwargs))
+    app.run(timeout=30)
     app.text_input(key="saved_target_name").set_value("Local fixture import")
     app.text_input(key="saved_target_version").set_value("fixture-v1")
     app.text_input(key="saved_captured_at").set_value("2026-01-01T12:00:00+00:00")
-    app.checkbox(key="saved_fixture_flag").check()
-    next(button for button in app.button if button.label == "Import answers").click().run(timeout=30)
+    next(b for b in app.button if b.label == "Import answers").click().run(timeout=30)
     assert not app.exception
-    assert any("couldn't import" in error.value for error in app.error)
-    assert any("Case/response sets differ" in item.value for item in app.caption)
-    assert "offline_workspace" not in app.session_state
-    app.text_area(key="saved_answers_json").set_value(json.dumps(sample["baseline"]["responses"]))
-    next(button for button in app.button if button.label == "Import answers").click().run(timeout=30)
+    assert app.error
+    assert any("missing" in item.value.lower() for item in app.caption)
+    answers[:] = sample["baseline"]["responses"]
+    next(b for b in app.button if b.label == "Import answers").click().run(timeout=30)
     assert not app.exception
     frame = app.session_state["offline_baseline"]
     assert len(frame) == 3 and frame["review_status"].eq("pending").all()
     assert frame["client_retrieval_status"].eq("not_measured").all()
     assert frame["latency_ms"].isna().all() and frame["estimated_cost"].isna().all()
+    assert not app.get("json")
 
 
 def test_live_path_keeps_existing_tools_and_never_defaults_to_synthetic(private_ui):
@@ -153,13 +235,13 @@ def test_live_path_keeps_existing_tools_and_never_defaults_to_synthetic(private_
     target = next(widget for widget in app.radio if widget.label == "Evaluation target")
     assert "Synthetic demonstration" not in target.options
     assert next(button for button in app.button if button.label == "Run Evaluation").disabled
-    assert any("External API connections are disabled" in info.value for info in app.info)
+    assert any("browser" in info.value.lower() or "model provider" in info.value for info in app.info)
     assert {"Evaluator Calibration", "Prompt Comparison", "Run History / Comparison", "Settings / Export"}.issubset(
-        set(app.radio(key="page").options)
+        set(app.selectbox(key="advanced_tool").options) | {"Run History / Comparison"}
     )
-    app.radio(key="page").set_value("Target Setup").run(timeout=30)
+    navigate(app, "Target Setup")
     assert not app.exception
-    assert any("External API connections are disabled" in info.value for info in app.info)
+    assert any("browser" in info.value.lower() or "model provider" in info.value for info in app.info)
     assert not any(button.label == "Check connection" for button in app.button)
 
 
@@ -167,7 +249,7 @@ def test_saved_review_keeps_source_extraction_notice_visible_and_in_reports(priv
     from src.reporting import json_report
 
     app = private_ui()
-    app.button(key="start_sample").click().run(timeout=30)
+    app.button(key="start_saved_sample").click().run(timeout=30)
     workspace = deepcopy(app.session_state["offline_workspace"])
     warning = "policy.pdf: Page 2 contains no searchable text. Check the original document."
     workspace["sources"][0].update(extraction_warnings=[warning], partially_extracted=True)
@@ -189,15 +271,17 @@ def test_public_settings_ignore_server_credentials_and_end_session_clears_ui(pri
 
     monkeypatch.setattr(config, "api_key_for_provider", forbidden_server_key)
     app = private_ui()
-    app.button(key="start_sample").click().run(timeout=30)
-    app.radio(key="page").set_value("Settings / Export").run(timeout=30)
+    app.button(key="start_saved_sample").click().run(timeout=30)
+    navigate(app, "Settings / Export")
     assert not app.exception
-    assert any(str(metric.value) == "Disabled for public sessions" for metric in app.metric)
+    assert not app.exception
+    assert not any(".env key" in item.value for item in app.caption)
     next(button for button in app.button if button.label == "End session and clear my data").click().run(timeout=30)
     assert not app.exception
-    assert "offline_workspace" not in app.session_state
+    assert app.session_state.get("offline_workspace") is None
     assert app.session_state["last_results"].empty
     assert all(not value for value in app.session_state["provider_api_keys"].values())
+    prepare_private_project(app)
     app.button(key="start_resume").click().run(timeout=30)
     assert not app.exception
     assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
@@ -213,7 +297,7 @@ def test_home_resume_panel_remains_open_across_reruns_until_leaving_flow(private
     assert not app.exception
     assert any(widget.label == "Resume a saved workspace" and widget.proto.expanded for widget in app.expander)
     assert app.session_state["_show_resume_workspace"] is True
-    app.radio(key="page").set_value("Overview").run(timeout=30)
+    navigate(app, "Overview")
     assert "_show_resume_workspace" not in app.session_state
     app.button(key="start_saved").click().run(timeout=30)
     assert any(widget.label == "Resume a saved workspace" and not widget.proto.expanded for widget in app.expander)
@@ -226,7 +310,7 @@ def test_resume_upload_keeps_panel_open_until_successful_restore(private_ui, mon
 
     app = private_ui()
     if existing:
-        app.button(key="start_sample").click().run(timeout=30)
+        app.button(key="start_saved_sample").click().run(timeout=30)
         previous = deepcopy(app.session_state["offline_workspace"])
         app.button(key="return_to_start").click().run(timeout=30)
     app.button(key="start_resume").click().run(timeout=30)

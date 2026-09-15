@@ -61,7 +61,7 @@ const observer=new MutationObserver(()=>{
       if(button.getAttribute('aria-label')!==label)button.setAttribute('aria-label',label);
     }
   }
-  if(!ready && [...root.querySelectorAll('button')].some(button=>button.textContent.includes('Try sample'))){ready=true;panel.hidden=true;root.hidden=false;}
+  if(!ready && [...root.querySelectorAll('button')].some(button=>button.textContent.includes('Try the sample review'))){ready=true;panel.hidden=true;root.hidden=false;}
 });
 observer.observe(root,{childList:true,subtree:true});
 // On narrow screens the sidebar covers the page. Finish navigation by
@@ -89,7 +89,7 @@ try{
   mount({
     pyodideUrl:url('runtime/pyodide.mjs'),
     prebuiltPackageNames:['numpy','pandas','scikit-learn','sqlite3','ssl','xlrd','beautifulsoup4','lxml','protobuf','pillow','fastparquet','cachetools','altair','pyodide-http','pydantic','pydantic-core','cryptography'],
-    requirements:['plotly-5.24.1-py3-none-any.whl','python_dotenv-1.0.1-py3-none-any.whl','pypdf-5.1.0-py3-none-any.whl','python_docx-1.1.2-py3-none-any.whl','striprtf-0.0.29-py3-none-any.whl','openpyxl-3.1.5-py2.py3-none-any.whl','python_pptx-1.0.2-py3-none-any.whl','tenacity-9.1.4-py3-none-any.whl','blinker-1.9.0-py3-none-any.whl','et_xmlfile-2.0.0-py3-none-any.whl','xlsxwriter-3.2.9-py3-none-any.whl'].map(name=>url('wheels/'+name)),
+    requirements:['plotly-5.24.1-py3-none-any.whl','python_dotenv-1.2.2-py3-none-any.whl','pypdf-6.18.1-py3-none-any.whl','python_docx-1.1.2-py3-none-any.whl','striprtf-0.0.29-py3-none-any.whl','openpyxl-3.1.5-py2.py3-none-any.whl','python_pptx-1.0.2-py3-none-any.whl','tenacity-9.1.4-py3-none-any.whl','blinker-1.9.0-py3-none-any.whl','et_xmlfile-2.0.0-py3-none-any.whl','xlsxwriter-3.2.9-py3-none-any.whl'].map(name=>url('wheels/'+name)),
     archives:[{url:url('source.zip'),format:'zip',options:{extractDir:'/app'}},{url:url('provider-packages.zip'),format:'zip',options:{extractDir:'/providers'}}],
     entrypoint:'entry.py',files:{'entry.py':{url:url('entry.py')}},
     streamlitConfig:{'browser.gatherUsageStats':false,'client.toolbarMode':'viewer','server.maxUploadSize':20,'theme.base':'light','theme.primaryColor':'#2563eb','theme.backgroundColor':'#fbfcff','theme.secondaryBackgroundColor':'#f5f7fb','theme.textColor':'#17212f'},

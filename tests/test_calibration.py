@@ -5,9 +5,11 @@ import pytest
 
 from src.aggregation import LaunchGateConfig, evaluate_candidate
 from src.calibration import (
+    DEFAULT_CALIBRATION_LABELS,
     CalibrationRequirements,
     EvaluatorThresholdConfiguration,
     calibrate_evaluators,
+    calibration_for_run,
     read_calibration_dataset,
     run_calibration_workflow,
     uncalibrated_status,
@@ -156,6 +158,48 @@ def test_human_reviews_and_calibration_result_are_workspace_scoped_and_persisted
             "SELECT COUNT(*) FROM calibration_reviews WHERE workspace_id = ?", (first.workspace_id,)
         ).fetchone()[0]
     assert reviews == len(_calibration_rows())
+
+
+def test_unversioned_calibration_does_not_qualify_despite_good_observed_metrics():
+    result = calibrate_evaluators(_calibration_rows(), labels=["policy_contradiction"])
+    assert result["evaluators"]["policy_contradiction"]["requirements_met"] is True
+    assert result["status"] == "insufficiently_calibrated"
+
+
+def test_partial_label_calibration_cannot_qualify_every_launch_evaluator():
+    result = calibrate_evaluators(
+        _calibration_rows(),
+        labels=["policy_contradiction"],
+        evaluator_version=EVALUATOR_VERSION,
+        label_semantics_version=LABEL_SEMANTICS_VERSION,
+    )
+    assert result["status"] == "calibrated"
+    attached = calibration_for_run(result, EvaluatorThresholdConfiguration())
+    assert attached["status"] == "insufficiently_calibrated"
+    assert "privacy_violation" in attached["limitations"][-1]
+    assert result["status"] == "calibrated", "Historical calibration evidence must not be mutated"
+
+
+def test_full_version_bound_calibration_qualifies_and_tampering_or_staleness_rejects():
+    rows = _calibration_rows()
+    rows["human_labels"] = rows["human_labels"].map(lambda value: list(DEFAULT_CALIBRATION_LABELS) if value else [])
+    rows["automatic_labels"] = rows["human_labels"]
+    result = calibrate_evaluators(
+        rows, evaluator_version=EVALUATOR_VERSION, label_semantics_version=LABEL_SEMANTICS_VERSION
+    )
+    assert calibration_for_run(result, EvaluatorThresholdConfiguration())["status"] == "calibrated"
+    stale = dict(result, evaluator_version="older")
+    with pytest.raises(ValueError, match="version"):
+        calibration_for_run(stale, EvaluatorThresholdConfiguration())
+    tampered = dict(result, reviewed_cases=99999)
+    with pytest.raises(ValueError, match="hash"):
+        calibration_for_run(tampered, EvaluatorThresholdConfiguration())
+
+
+@pytest.mark.parametrize("data", [b"null", b"123", b'"text"'])
+def test_calibration_json_scalar_has_actionable_parse_error(data):
+    with pytest.raises(ValueError, match="parsed safely"):
+        read_calibration_dataset("reviews.json", data)
 
 
 def _qualified_calibration(**kwargs):

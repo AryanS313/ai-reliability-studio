@@ -123,6 +123,8 @@ def test_all_mock_scenarios(scenario: str, status: ExecutionStatus):
 
 
 def test_real_provider_failure_is_never_converted_to_mock(monkeypatch):
+    monkeypatch.setattr("src.config.APP_ACCESS_MODE", "local")
+
     def fail(*args, **kwargs):
         raise RuntimeError("secret provider detail")
 
@@ -370,6 +372,8 @@ def test_external_target_streaming_malformed_empty_and_sensitive_header_errors()
 def test_foundation_provider_failures_are_classified_without_secret_leakage(
     monkeypatch, exception, expected_status, expected_code
 ):
+    monkeypatch.setattr("src.config.APP_ACCESS_MODE", "local")
+
     def fail(*args, **kwargs):
         raise exception
 
@@ -387,6 +391,7 @@ def test_foundation_provider_failures_are_classified_without_secret_leakage(
 
 
 def test_foundation_provider_empty_response_and_safety_refusal_contract(monkeypatch):
+    monkeypatch.setattr("src.config.APP_ACCESS_MODE", "local")
     monkeypatch.setattr("src.llm_client._openai_answer", lambda *args, **kwargs: {"answer": "", "metadata": {}})
     empty = generate_answer("Question", "Context", "System", "gpt-4o-mini", api_key="runtime-key")
     assert empty["status"] == ExecutionStatus.INVALID_RESPONSE.value

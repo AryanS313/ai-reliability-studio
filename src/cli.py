@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from src import database
 from src.aggregation import LaunchGateConfig
 from src.chunker import chunk_documents
 from src.document_loader import load_documents
+from src.domain import TargetType
 from src.evaluator import read_eval_dataset, run_evaluation
-from src.reporting import build_report_payload, render_report_payload, validate_launch_gates
+from src.reporting import build_report_payload, render_report_payload
 from src.storage import SQLiteRepository
 from src.targets import ExternalHTTPTarget, ExternalTargetConfig, SecretResolver
 
@@ -59,13 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command not in {"run", "replay"}:
         return EXIT_CONFIGURATION_ERROR
     try:
-        gate_values = json.loads(Path(args.gate_config).read_text(encoding="utf-8")) if args.gate_config else {}
-        if not isinstance(gate_values, dict):
-            raise ValueError("Gate configuration must be a JSON object.")
-        try:
-            gates = validate_launch_gates(LaunchGateConfig(**gate_values))
-        except TypeError as exc:
-            raise ValueError(f"Invalid gate configuration: {exc}") from exc
+        gates = _load_gate_configuration(args.gate_config)
         if args.command == "replay":
             return _replay(args, gates)
         repository = SQLiteRepository(args.database)
@@ -116,17 +113,64 @@ def main(argv: list[str] | None = None) -> int:
         payload = build_report_payload(results, gates=gates)
         Path(args.output).write_text(render_report_payload(payload, format=args.format), encoding="utf-8")
         evaluations = payload["candidates"]
+        # Synthetic failure fixtures demonstrate the workflow and retain the
+        # documented synthetic-only gate-failure exit code used by CI.
+        if not results.empty and results["target_type"].eq(TargetType.SYNTHETIC.value).all():
+            return EXIT_GATE_FAILURE
+        # An incomplete real execution needs an operational repair before its quality
+        # gates are interpretable. Preserve this distinct CI failure signal even
+        # when the missing executions also cause insufficient-evidence gates.
+        if bool((results["execution_status"] != "passed").any()):
+            return EXIT_EXECUTION_ERROR
         if not evaluations or any(
             result["verdict"] not in {"Ready for Internal Testing", "Ready for Controlled Beta"}
             for result in evaluations.values()
         ):
             return EXIT_GATE_FAILURE
-        if bool((results["execution_status"] != "passed").any()):
-            return EXIT_EXECUTION_ERROR
         return EXIT_SUCCESS
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return EXIT_CONFIGURATION_ERROR
+
+
+def _load_gate_configuration(path: str | None) -> LaunchGateConfig:
+    """Validate launch policy before creating records or contacting a target."""
+    values = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+    if not isinstance(values, dict):
+        raise ValueError("Launch gate configuration must be a JSON object.")
+    defaults = asdict(LaunchGateConfig())
+    if set(values) - set(defaults):
+        raise ValueError("Launch gate configuration contains unsupported settings.")
+    for name, value in values.items():
+        default = defaults[name]
+        if isinstance(default, bool):
+            valid = isinstance(value, bool)
+        elif isinstance(default, tuple):
+            valid = isinstance(value, list | tuple) and all(isinstance(item, str) and item.strip() for item in value)
+            if valid:
+                values[name] = tuple(value)
+        elif isinstance(default, int):
+            valid = (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= (1 if name == "minimum_sample_size" else 0)
+            )
+        else:
+            try:
+                valid = (
+                    value is None
+                    if default is None and value is None
+                    else isinstance(value, int | float)
+                    and not isinstance(value, bool)
+                    and math.isfinite(float(value))
+                    and value >= 0
+                    and (default is None or value <= 1)
+                )
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+        if not valid:
+            raise ValueError(f"Launch gate setting {name} has an invalid type or range.")
+    return LaunchGateConfig(**values)
 
 
 def _replay(args: argparse.Namespace, gates: LaunchGateConfig) -> int:

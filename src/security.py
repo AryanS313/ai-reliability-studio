@@ -132,6 +132,29 @@ def redact_secrets(value: Any, *, preserve_references: bool = True) -> Any:
     return text
 
 
+def redact_known_secrets(value: Any, secrets: Iterable[str]) -> Any:
+    """Remove exact runtime credentials, including header values echoed by targets."""
+    secret_values = {str(secret) for secret in secrets if secret}
+    secret_values.update(
+        secret.split(" ", 1)[1]
+        for secret in tuple(secret_values)
+        if secret.lower().startswith(("bearer ", "basic ")) and secret.split(" ", 1)[1]
+    )
+    if isinstance(value, dict):
+        return {
+            redact_known_secrets(key, secret_values): redact_known_secrets(item, secret_values)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_known_secrets(item, secret_values) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_known_secrets(item, secret_values) for item in value)
+    if isinstance(value, str):
+        for secret in sorted(secret_values, key=len, reverse=True):
+            value = value.replace(secret, "[REDACTED_CREDENTIAL]")
+    return value
+
+
 def detect_pii(text: str) -> list[dict[str, Any]]:
     """Return redacted, structured evidence for high-precision PII findings.
 

@@ -11,6 +11,7 @@ os.environ.update(
     {
         "AUTH_MODE": "public-session",
         "APP_ENV": "browser",
+        "APP_ACCESS_MODE": "browser",
         "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
     }
 )

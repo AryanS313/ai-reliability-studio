@@ -1,8 +1,22 @@
 # Changelog
 
-All notable changes are documented here. The project follows semantic versioning for application and evaluator behavior.
+This technical changelog complements the [living product history and PM handoff](docs/PRODUCT_EVOLUTION.md). Package version, application release, evaluator identity and hosting version are separate; they do not independently prove deployment or readiness.
 
-## Unreleased — public workflow repairs
+## Application 2026.09.16.1 — design-partner browser beta
+
+Published as Sites version 8; package remains 1.0.0. GitHub publication/CI state is maintained in the living history and release report.
+
+- Narrow the primary workflow to support-assistant release review with six primary steps and a one-action 32-case synthetic example.
+- Replace primary JSON/configuration displays with readable decisions, evidence, forms and optional engineering exports.
+- Enforce privacy/project/role prerequisites, explicit credentials and external-call consent, sample-only native public mode and private browser sessions.
+- Integrate saved-answer review, source fidelity, replacement comparisons and workspace restoration from September main.
+- Advance evaluation to `deterministic-v8` and reports to schema 2.1; preserve critical failures, calibration/compatibility limits and unknown measurements.
+- Add privacy-safe local product events, a full metric dictionary, design-partner discovery plan and living product-evolution record.
+- Patch compatible browser dependencies and document retained compiled-package advisories with actual Wasm reachability evidence.
+
+## September 7–8, 2026 — public workflow repairs
+
+Historical application releases 2026.09.07.1 through 2026.09.08.2; evaluator progressed from v6 to v7. These changes were merged before the current design-partner integration.
 
 - Add guided sample, saved-answer import/review/export/resume, and live-evaluation paths while retaining advanced project tools.
 - Keep automatic checks separate from explicit source reviews, preserve AI-assisted attribution, and compare only the supplied replacement cases.

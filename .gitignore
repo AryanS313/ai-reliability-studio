@@ -3,11 +3,15 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.streamlit/
+!.streamlit/
 .streamlit/*
 !.streamlit/config.toml
 .streamlit/secrets.toml
 venv/
 .venv/
+.venv-py39-backup/
+.local-verification/
 *.pyc
 *.pyo
 *.pyd
@@ -26,3 +30,7 @@ data/*.sqlite3
 *.sqlite
 *.sqlite3
 *.sqlite-journal
+
+# Browser vendor archives are reconstructed from pinned inputs.
+browser_runtime/dependencies/cache/
+browser_site/.build/

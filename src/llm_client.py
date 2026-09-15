@@ -8,6 +8,7 @@ import httpx
 
 from src import config
 from src.domain import ExecutionStatus
+from src.security import redact_known_secrets
 from src.targets import MockTargetConfig, SyntheticMockTarget
 
 PROVIDER_TIMEOUT_SECONDS = 30.0
@@ -102,7 +103,7 @@ def _http_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Clien
     return httpx.Client(
         timeout=httpx.Timeout(PROVIDER_TIMEOUT_SECONDS, connect=10.0),
         follow_redirects=False,
-        trust_env=not config.public_sessions_enabled(),
+        trust_env=False,
         transport=transport,
     )
 
@@ -186,6 +187,18 @@ def generate_answer(
         _anthropic_sampling_configuration(model_name, temperature, seed) if provider == "anthropic" else {}
     )
     request_metadata["prompt_transport"] = _prompt_transport_metadata(provider, system_prompt)
+    if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.is_browser_runtime():
+        return _failure(
+            status=ExecutionStatus.INVALID_RESPONSE,
+            provider=provider,
+            model=model_name,
+            code="real_provider_disabled_in_public_demo"
+            if config.APP_ACCESS_MODE == "public-demo"
+            else "untrusted_provider_access_mode",
+            message="This runtime is not allowed to call real providers. Use a trusted private workspace or the supported browser runtime.",
+            final_prompt=final_prompt,
+            request_metadata=request_metadata,
+        )
     effective_api_key = api_key or config.api_key_for_provider(provider)
     if not effective_api_key:
         return _failure(
@@ -212,6 +225,20 @@ def generate_answer(
             result = _openai_answer(
                 user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
             )
+        if redact_known_secrets(result, (effective_api_key,)) != result:
+            # A provider can echo a key in free text that pattern redaction would
+            # miss. Discard the response before it can be scored or persisted.
+            failure = _failure(
+                status=ExecutionStatus.INVALID_RESPONSE,
+                provider=provider,
+                model=model_name,
+                code="credential_in_provider_response",
+                message="The provider response exposed a configured credential and was discarded. Review the target before retrying.",
+                final_prompt=redact_known_secrets(final_prompt, (effective_api_key,)),
+                request_metadata=request_metadata,
+            )
+            failure["metadata"]["credential_redacted"] = True
+            return failure
         metadata = dict(result.get("metadata") or {})
         metadata["prompt_transport"] = {
             **request_metadata["prompt_transport"],
@@ -269,24 +296,21 @@ def _openai_answer(
     from openai import OpenAI
 
     start = time.perf_counter()
-    public = config.public_sessions_enabled()
     with (
         _http_client() as http_client,
         OpenAI(
             api_key=api_key,
-            base_url="https://api.openai.com/v1" if public else None,
-            organization="" if public else None,
-            project="" if public else None,
+            base_url="https://api.openai.com/v1",
+            organization="",
+            project="",
             http_client=http_client,
             timeout=http_client.timeout,
             max_retries=0,
         ) as client,
     ):
-        if public:
-            # Empty explicit arguments prevent environment fallback at construction;
-            # None here also omits the optional headers from the actual request.
-            client.organization = None
-            client.project = None
+        # Empty explicit values prevent environment routing and optional headers.
+        client.organization = None
+        client.project = None
         # OpenAI 1.54.4 exposes Chat Completions; it has no Responses resource.
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -334,21 +358,18 @@ def _gemini_answer(
     from google.genai.client import DebugConfig
 
     start = time.perf_counter()
-    public = config.public_sessions_enabled()
     options: dict[str, Any] = {"timeout": int(PROVIDER_TIMEOUT_SECONDS * 1000)}
-    if public:
-        options["base_url"] = "https://generativelanguage.googleapis.com/"
+    options["base_url"] = "https://generativelanguage.googleapis.com/"
     client = genai.Client(
         api_key=api_key,
-        vertexai=False if public else None,
+        vertexai=False,
         http_options=options,
         debug_config=DebugConfig(client_mode=None, replays_directory=None, replay_id=None),
     )
     api_client: Any = client._api_client
-    if public:
-        api_client.project = None
-        api_client.location = None
-        api_client._credentials = None
+    api_client.project = None
+    api_client.location = None
+    api_client._credentials = None
     # google-genai 1.0.0 has no custom transport option and its requests sessions
     # inherit proxies/netrc and are not closed. Keep the SDK serialization/parser,
     # but use a per-instance synchronous transport with an explicit lifetime.
@@ -451,14 +472,13 @@ def _anthropic_answer(
     from anthropic import NOT_GIVEN, Anthropic
 
     start = time.perf_counter()
-    public = config.public_sessions_enabled()
     sampling_metadata = _anthropic_sampling_configuration(model_name, temperature, seed)
     with (
         _http_client() as http_client,
         Anthropic(
             api_key=api_key,
-            auth_token="" if public else None,
-            base_url="https://api.anthropic.com" if public else None,
+            auth_token="",
+            base_url="https://api.anthropic.com",
             http_client=http_client,
             timeout=http_client.timeout,
             max_retries=0,

@@ -496,8 +496,8 @@ def test_automatic_uncertainty_is_separate_from_failure_and_review_completion():
     rendered = render_report_payload(payload, format="html")
     assert "1 failure outcomes; 4 unresolved assessments; 1 execution errors" in rendered
     assert "not counted as demonstrated answer failures" in rendered
-    assert "Automatic outcome: unresolved; determination: unable_to_determine" in rendered
-    assert "Advisory classifier label: Policy Contradiction" in rendered
+    assert "Automatic outcome: Needs review; determination: Could not determine" in rendered
+    assert "Advisory finding: Policy Contradiction" in rendered
     assert "policy_contradiction" in rendered
 
 
@@ -550,3 +550,15 @@ def test_persisted_observed_identity_roundtrip_never_uses_configured_runner_defa
     assert payload["executions"][0]["model_name"] == model
     assert payload["executions"][0]["configured_runner_model"] == "mock-model"
     assert persisted.iloc[0]["model_name"] == "mock-model"
+
+
+@pytest.mark.parametrize("types", [["unknown_target"] * 30, ["external_api"] * 29 + ["unrecorded_target"]])
+def test_unknown_target_provenance_cannot_claim_real_assistant_evidence(types):
+    rows = _rows().assign(target_type=types)
+    payload = build_report_payload(rows)
+    assert payload["metadata"]["evidence_classification"] == "unknown"
+    unknown = [value for value in payload["candidates"].values() if value["candidate"]["target_type"] != "external_api"]
+    assert unknown and all(value["launch_blocked"] for value in unknown)
+    rendered = render_report_payload(payload, format="html")
+    assert "The source of these answers was not recorded" in rendered
+    assert "Recorded responses from a real assistant" not in rendered
