@@ -8,6 +8,7 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -16,10 +17,10 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qsl, urljoin, urlparse
 
-from src import config
+from src import config, hosted_limits
 from src.domain import SYNTHETIC_EVIDENCE_NOTICE, ExecutionStatus, TargetResponse, TargetType
 from src.security import redact_known_secrets, redact_secrets
 from src.utils import keyword_tokens
@@ -68,7 +69,7 @@ class TargetAdapter(ABC):
 
     @property
     def default_retry_count(self) -> int:
-        return 2
+        return hosted_limits.HOSTED_MAX_RETRIES if config.hosted_sessions_enabled() else 2
 
     def health_check(self) -> TargetResponse:
         return TargetResponse(
@@ -247,6 +248,7 @@ class FoundationModelTarget(TargetAdapter):
     def __init__(self, configuration: FoundationModelConfig, secrets: SecretResolver | None = None) -> None:
         self.configuration = configuration
         self.secrets = secrets or SecretResolver()
+        self._hosted_budget = hosted_limits.current_session()
 
     @property
     def version(self) -> str:
@@ -260,15 +262,26 @@ class FoundationModelTarget(TargetAdapter):
         )
 
     def execute(self, request: dict[str, Any]) -> TargetResponse:
-        from src.llm_client import generate_answer
-
-        if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.is_browser_runtime():
+        if (
+            config.APP_ACCESS_MODE not in {"local", "authenticated"}
+            and not config.is_browser_runtime()
+            and not config.hosted_sessions_enabled()
+        ):
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="real_provider_disabled_in_public_demo",
                 safe_error="Real provider calls require a private workspace or a verified browser runtime.",
                 metadata={"quality_score_eligible": False, "retryable": False},
             )
+        try:
+            with hosted_limits.session_scope(self._hosted_budget):
+                return self._execute_provider(request)
+        except hosted_limits.HostedLimitError as error:
+            return hosted_limits.limit_response(error)
+
+    def _execute_provider(self, request: dict[str, Any]) -> TargetResponse:
+        from src.llm_client import generate_answer
+
         api_key = self.secrets.resolve(self.configuration.api_key_reference)
         result = generate_answer(
             question=str(request.get("question") or request.get("input") or ""),
@@ -306,7 +319,7 @@ class ExternalTargetConfig:
     request_template: dict[str, Any] = field(default_factory=lambda: {"input": "${question}"})
     response_mappings: dict[str, str] = field(default_factory=lambda: {"answer": "$.answer"})
     timeout_seconds: float = 30.0
-    retry_count: int = 2
+    retry_count: int = field(default_factory=lambda: 1 if config.hosted_sessions_enabled() else 2)
     streaming: bool = False
     health_check_path: str | None = None
 
@@ -326,6 +339,13 @@ class ExternalTargetConfig:
             or not 0 <= self.retry_count <= 10
         ):
             raise TargetConfigurationError("retry_count must be between 0 and 10")
+        if config.hosted_sessions_enabled():
+            if self.method.upper() not in {"GET", "POST"}:
+                raise TargetConfigurationError("Online assistant evaluations support GET or POST requests.")
+            if self.timeout_seconds > hosted_limits.HOSTED_MAX_TIMEOUT_SECONDS:
+                raise TargetConfigurationError("Online assistant requests have a maximum timeout of 30 seconds.")
+            if self.retry_count > hosted_limits.HOSTED_MAX_RETRIES:
+                raise TargetConfigurationError("Online assistant requests allow at most one retry.")
         if not isinstance(self.headers, dict) or not isinstance(self.request_template, dict):
             raise TargetConfigurationError("Headers and request template must be JSON objects")
         if not isinstance(self.response_mappings, dict) or not self.response_mappings.get("answer"):
@@ -366,6 +386,7 @@ class ExternalHTTPTarget(TargetAdapter):
         self.configuration = configuration
         self.secrets = secrets or SecretResolver()
         self._opener = opener or _secure_urlopen
+        self._hosted_budget = hosted_limits.current_session()
 
     @property
     def version(self) -> str:
@@ -388,8 +409,9 @@ class ExternalHTTPTarget(TargetAdapter):
 
         return self.configuration.method.upper() != "GET" and contains(self.configuration.request_template)
 
+    @hosted_limits.guard_target_call
     def execute(self, request: dict[str, Any]) -> TargetResponse:
-        if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
+        if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.hosted_sessions_enabled():
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="public_demo_external_disabled",
@@ -424,6 +446,8 @@ class ExternalHTTPTarget(TargetAdapter):
             headers=headers,
             method=self.configuration.method.upper(),
         )
+        if config.hosted_sessions_enabled():
+            cast(Any, http_request)._studio_deadline = time.monotonic() + self.configuration.timeout_seconds
         response = None
         try:
             response = self._opener(http_request, timeout=self.configuration.timeout_seconds)
@@ -450,11 +474,11 @@ class ExternalHTTPTarget(TargetAdapter):
                 )
             if status_code >= 400:
                 return _http_failure_response(status_code, getattr(response, "headers", None), started=started)
-            try:
-                response_bytes = response.read(config.MAX_EXTERNAL_RESPONSE_BYTES + 1)
-            except TypeError:  # Minimal test/dummy responses may not expose read(size).
-                response_bytes = response.read()
-            if len(response_bytes) > config.MAX_EXTERNAL_RESPONSE_BYTES:
+            response_limit = config.MAX_EXTERNAL_RESPONSE_BYTES
+            if config.hosted_sessions_enabled():
+                response_limit = min(response_limit, hosted_limits.HOSTED_MAX_RESPONSE_BYTES)
+            response_bytes = _read_external_response(response, response_limit, self.configuration.timeout_seconds)
+            if len(response_bytes) > response_limit:
                 return TargetResponse(
                     status=ExecutionStatus.INVALID_RESPONSE,
                     latency_ms=(time.perf_counter() - started) * 1000,
@@ -485,7 +509,19 @@ class ExternalHTTPTarget(TargetAdapter):
                 safe_error="The external target destination failed network safety validation.",
             )
         except urllib.error.URLError as exc:
-            timed_out = isinstance(exc.reason, TimeoutError)
+            deadline = getattr(http_request, "_studio_deadline", None)
+            timed_out = isinstance(exc.reason, TimeoutError) or (deadline is not None and time.monotonic() >= deadline)
+            return TargetResponse(
+                status=ExecutionStatus.TIMED_OUT if timed_out else ExecutionStatus.INVALID_RESPONSE,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                error_code="target_timeout" if timed_out else "invalid_external_response",
+                safe_error="The external target did not respond before the configured timeout."
+                if timed_out
+                else "External target response could not be validated.",
+            )
+        except (http.client.HTTPException, OSError) as exc:
+            deadline = getattr(http_request, "_studio_deadline", None)
+            timed_out = isinstance(exc, TimeoutError) or (deadline is not None and time.monotonic() >= deadline)
             return TargetResponse(
                 status=ExecutionStatus.TIMED_OUT if timed_out else ExecutionStatus.INVALID_RESPONSE,
                 latency_ms=(time.perf_counter() - started) * 1000,
@@ -543,8 +579,9 @@ class ExternalHTTPTarget(TargetAdapter):
             model=_optional_identity(_json_path(data, mappings.get("model", ""))),
         )
 
+    @hosted_limits.guard_target_call
     def health_check(self) -> TargetResponse:
-        if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
+        if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.hosted_sessions_enabled():
             return TargetResponse(
                 status=ExecutionStatus.INVALID_RESPONSE,
                 error_code="public_demo_external_disabled",
@@ -875,7 +912,13 @@ def _validate_endpoint_policy(endpoint: str) -> str:
     local_development = _is_loopback_host(host) and not _network_controls_required()
     if parsed.scheme != "https" and not (parsed.scheme == "http" and local_development):
         raise TargetConfigurationError("External endpoints must use HTTPS; local HTTP is development-only")
-    if _network_controls_required() and not config.EXTERNAL_TARGET_ALLOWED_HOSTS:
+    if config.hosted_sessions_enabled() and parsed.port not in (None, 443):
+        raise TargetConfigurationError("Online assistant endpoints must use HTTPS on port 443.")
+    if (
+        _network_controls_required()
+        and not config.hosted_sessions_enabled()
+        and not config.EXTERNAL_TARGET_ALLOWED_HOSTS
+    ):
         raise TargetConfigurationError("Public and production external targets require EXTERNAL_TARGET_ALLOWED_HOSTS")
     if config.EXTERNAL_TARGET_ALLOWED_HOSTS and host not in config.EXTERNAL_TARGET_ALLOWED_HOSTS:
         raise TargetConfigurationError("External target host is not in EXTERNAL_TARGET_ALLOWED_HOSTS")
@@ -941,40 +984,130 @@ def _same_origin(expected: str, actual: str) -> bool:
     )
 
 
+def _remaining_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("The external request exceeded its time budget")
+    return remaining
+
+
+def _read_external_response(response: Any, maximum: int, timeout: float) -> bytes:
+    if not config.hosted_sessions_enabled():
+        try:
+            return cast(bytes, response.read(maximum + 1))
+        except TypeError:  # Minimal test responses may not expose read(size).
+            return cast(bytes, response.read())
+    deadline = getattr(response, "_studio_deadline", None) or (time.monotonic() + timeout)
+    connection_socket = getattr(response, "_studio_socket", None)
+    read_chunk = getattr(response, "read1", response.read)
+    chunks: list[bytes] = []
+    size = 0
+    while size <= maximum:
+        remaining = _remaining_timeout(deadline)
+        # HTTPResponse closes its socket file as soon as Content-Length bytes
+        # are consumed. Do not touch that now-closed descriptor on the EOF pass.
+        is_closed = getattr(response, "isclosed", None)
+        if callable(is_closed) and is_closed():
+            break
+        if connection_socket is not None:
+            connection_socket.settimeout(remaining)
+        chunk = read_chunk(min(64 * 1024, maximum + 1 - size))
+        _remaining_timeout(deadline)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
+
+
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201, ARG002
         return None
+
+
+class _DeadlineHTTPResponse(http.client.HTTPResponse):
+    def close(self) -> None:
+        timer = getattr(self, "_studio_timer", None)
+        if timer is not None:
+            timer.cancel()
+        super().close()
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     # The stdlib initializes these; its typeshed stubs omit the private fields.
     _context: ssl.SSLContext
     _tunnel_host: str | None
+    response_class = _DeadlineHTTPResponse
 
     def __init__(self, host: str, *, addresses: tuple[_ResolvedAddress, ...], **kwargs: Any) -> None:
         super().__init__(host, **kwargs)
         self._addresses = addresses
+        timeout_seconds = self.timeout if isinstance(self.timeout, int | float) else 30.0
+        self._deadline = (
+            time.monotonic() + min(float(timeout_seconds), hosted_limits.HOSTED_MAX_TIMEOUT_SECONDS)
+            if config.hosted_sessions_enabled()
+            else None
+        )
+        self._deadline_socket: socket.socket | None = None
+        self._deadline_timer: threading.Timer | None = None
+
+    def _abort_at_deadline(self) -> None:
+        connection_socket = self._deadline_socket
+        if connection_socket is not None:
+            try:
+                connection_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def _cancel_deadline(self) -> None:
+        if self._deadline_timer is not None:
+            self._deadline_timer.cancel()
 
     def connect(self) -> None:
         if self._tunnel_host:
             raise OSError("Proxy tunnels are disabled for protected external targets")
+        if self._deadline is not None:
+            self._deadline_timer = threading.Timer(_remaining_timeout(self._deadline), self._abort_at_deadline)
+            self._deadline_timer.daemon = True
+            self._deadline_timer.start()
         last_error: OSError | None = None
         for address in self._addresses:
             sock = socket.socket(address.family, address.kind, address.protocol)
+            self._deadline_socket = sock
             try:
-                sock.settimeout(self.timeout)
+                sock.settimeout(_remaining_timeout(self._deadline) if self._deadline is not None else self.timeout)
                 # Connect directly to the numeric sockaddr already validated above.
                 # socket.create_connection would resolve the hostname a second time.
                 sock.connect(address.sockaddr)
+                if self._deadline is not None:
+                    sock.settimeout(_remaining_timeout(self._deadline))
                 self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+                self._deadline_socket = self.sock
                 return
             except OSError as exc:
                 sock.close()
                 last_error = exc
             except BaseException:
                 sock.close()
+                self._cancel_deadline()
                 raise
+        self._cancel_deadline()
         raise last_error or OSError("No validated address was available")
+
+    def getresponse(self) -> http.client.HTTPResponse:
+        if self._deadline is not None and self.sock is not None:
+            self.sock.settimeout(_remaining_timeout(self._deadline))
+        connection_socket = self.sock
+        try:
+            response = super().getresponse()
+        except BaseException:
+            self._cancel_deadline()
+            raise
+        if self._deadline is not None:
+            cast(Any, response)._studio_deadline = self._deadline
+            cast(Any, response)._studio_socket = connection_socket
+            cast(Any, response)._studio_timer = self._deadline_timer
+        return response
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
@@ -1024,9 +1157,12 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
 
 
 def _secure_urlopen(request: urllib.request.Request, *, timeout: float):
-    if config.APP_ACCESS_MODE not in {"local", "authenticated"}:
+    if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.hosted_sessions_enabled():
         raise TargetConfigurationError("External assistant calls require a private native workspace")
     addresses = _validate_resolved_destination(request.full_url, force=True)
+    if config.hosted_sessions_enabled():
+        deadline = getattr(request, "_studio_deadline", None) or (time.monotonic() + min(timeout, 30.0))
+        timeout = min(timeout, _remaining_timeout(deadline), hosted_limits.HOSTED_MAX_TIMEOUT_SECONDS)
     for name in list(request.headers) + list(request.unredirected_hdrs):
         if name.lower() in {"host", "proxy-authorization", "proxy-connection"}:
             request.remove_header(name)

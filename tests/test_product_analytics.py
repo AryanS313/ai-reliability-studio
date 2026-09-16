@@ -63,6 +63,11 @@ def test_analytics_requires_random_session_identifier_shape(session_id):
         validate_event("session_started", session_id, {"mode": "local"})
 
 
+def test_hosted_session_start_uses_only_allowlisted_operational_mode():
+    payload = validate_event("session_started", uuid.uuid4().hex, {"mode": "hosted-session"})
+    assert payload["mode"] == "hosted-session"
+
+
 def test_analytics_stores_only_approved_operational_fields_with_authorization_scope(tmp_path):
     repository = SQLiteRepository(tmp_path / "analytics.sqlite3")
     first = repository.create_workspace("first@example.test", "First private workspace")

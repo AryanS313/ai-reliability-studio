@@ -276,7 +276,7 @@ def test_connection_save_validates_json_preserves_mapping_and_never_persists_cre
     _find(app.checkbox, consent_label).check().run(timeout=30)
     assert not app.exception
     assert not _find(app.button, "Run Evaluation").disabled
-    _find(app.slider, "Retryable-error retries").set_value(3).run(timeout=30)
+    _find(app.slider, "Retries after temporary errors").set_value(3).run(timeout=30)
     assert not app.exception
     assert not _find(app.checkbox, consent_label).value
     assert _find(app.button, "Run Evaluation").disabled

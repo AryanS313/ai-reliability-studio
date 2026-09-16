@@ -17,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 
-from src import config
+from src import config, hosted_limits
 from src.domain import WorkspaceContext
 from src.migrations import migrate_sqlite
 from src.storage import EphemeralSQLiteRepository, Repository, repository_from_url
@@ -41,8 +41,11 @@ def _validate_access_mode() -> None:
     from src.auth import AuthenticationError
 
     mode = config.APP_ACCESS_MODE
-    if mode == "public-demo" or config.is_browser_runtime():
+    if mode == "public-demo" or config.is_browser_runtime() or config.hosted_sessions_enabled():
         return
+    if mode == "hosted-session":
+        clear_request()
+        raise AuthenticationError("Hosted sessions require a native server runtime.")
     if mode == "browser":
         clear_request()
         raise AuthenticationError("Browser access requires a real WebAssembly browser runtime.")
@@ -55,7 +58,7 @@ def _validate_access_mode() -> None:
         raise AuthenticationError("Local access mode is disabled in production.")
     if mode == "authenticated":
         raise AuthenticationError("Authenticated access requires trusted proxy authentication.")
-    raise AuthenticationError("APP_ACCESS_MODE must be public-demo, browser, local, or authenticated.")
+    raise AuthenticationError("APP_ACCESS_MODE must be hosted-session, public-demo, browser, local, or authenticated.")
 
 
 def initialize_session(state: MutableMapping[str, Any], headers: dict[str, Any] | None = None) -> WorkspaceContext:
@@ -85,11 +88,13 @@ def set_repository(repository) -> None:
     """Override storage in this execution context only (CLI and direct tests)."""
     _repository.set(repository)
     _request.set(None)
+    hosted_limits.bind_session(None)
 
 
 def clear_request() -> None:
     """End the current request; never retain a prior visitor's identity."""
     _request.set(None)
+    hosted_limits.bind_session(None)
 
 
 def _valid_binding() -> RequestBinding | None:
@@ -115,6 +120,10 @@ def bind_context(repository: Repository, context: WorkspaceContext) -> RequestBi
     if config.public_sessions_enabled() and not isinstance(repository, EphemeralSQLiteRepository):
         raise PermissionError("Anonymous workspaces require in-memory session storage.")
     repository.authorize(context)
+    budget = hosted_limits.repository_budget(repository)
+    if config.hosted_sessions_enabled() and (budget is None or budget.closed):
+        raise PermissionError("Initialize an active online session before accessing storage.")
+    hosted_limits.bind_session(budget if config.hosted_sessions_enabled() else None)
     binding = RequestBinding(repository, context, config.AUTH_MODE, config.APP_ENV, config.APP_ACCESS_MODE)
     _request.set(binding)
     return binding
@@ -124,10 +133,12 @@ def bind_context(repository: Repository, context: WorkspaceContext) -> RequestBi
 def request_scope(repository: Repository, context: WorkspaceContext) -> Iterator[RequestBinding]:
     """Explicit, nesting-safe binding for a worker or request with a known identity."""
     previous = _request.set(None)
+    previous_budget = hosted_limits.current_session()
     try:
         yield bind_context(repository, context)
     finally:
         _request.reset(previous)
+        hosted_limits.bind_session(previous_budget)
 
 
 def current_context(headers: dict[str, Any] | None = None) -> WorkspaceContext:

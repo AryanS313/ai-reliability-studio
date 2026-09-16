@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from src import config
+from src import config, hosted_limits
 from src.domain import ExecutionStatus
 from src.security import redact_known_secrets
 from src.targets import MockTargetConfig, SyntheticMockTarget
@@ -187,7 +187,11 @@ def generate_answer(
         _anthropic_sampling_configuration(model_name, temperature, seed) if provider == "anthropic" else {}
     )
     request_metadata["prompt_transport"] = _prompt_transport_metadata(provider, system_prompt)
-    if config.APP_ACCESS_MODE not in {"local", "authenticated"} and not config.is_browser_runtime():
+    if (
+        config.APP_ACCESS_MODE not in {"local", "authenticated"}
+        and not config.is_browser_runtime()
+        and not config.hosted_sessions_enabled()
+    ):
         return _failure(
             status=ExecutionStatus.INVALID_RESPONSE,
             provider=provider,
@@ -212,18 +216,51 @@ def generate_answer(
         )
     started = time.perf_counter()
     try:
+        hosted_limits.validate_provider_request(final_prompt, max_tokens)
         user_message = build_user_message(context, question)
-        if provider == "gemini":
-            result = _gemini_answer(
-                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
-            )
-        elif provider == "anthropic":
-            result = _anthropic_answer(
-                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
-            )
-        else:
-            result = _openai_answer(
-                user_message, model_name, effective_api_key, temperature, seed, max_tokens, system_prompt=system_prompt
+        with hosted_limits.call_scope():
+            if provider == "gemini":
+                result = _gemini_answer(
+                    user_message,
+                    model_name,
+                    effective_api_key,
+                    temperature,
+                    seed,
+                    max_tokens,
+                    system_prompt=system_prompt,
+                )
+            elif provider == "anthropic":
+                result = _anthropic_answer(
+                    user_message,
+                    model_name,
+                    effective_api_key,
+                    temperature,
+                    seed,
+                    max_tokens,
+                    system_prompt=system_prompt,
+                )
+            else:
+                result = _openai_answer(
+                    user_message,
+                    model_name,
+                    effective_api_key,
+                    temperature,
+                    seed,
+                    max_tokens,
+                    system_prompt=system_prompt,
+                )
+        if (
+            config.hosted_sessions_enabled()
+            and len(json.dumps(result, default=str).encode()) > hosted_limits.HOSTED_MAX_RESPONSE_BYTES
+        ):
+            return _failure(
+                status=ExecutionStatus.INVALID_RESPONSE,
+                provider=provider,
+                model=model_name,
+                code="provider_response_too_large",
+                message="The provider response exceeded the online size limit and was discarded.",
+                final_prompt=final_prompt,
+                request_metadata=request_metadata,
             )
         if redact_known_secrets(result, (effective_api_key,)) != result:
             # A provider can echo a key in free text that pattern redaction would
@@ -267,6 +304,18 @@ def generate_answer(
             return failure
         result.update({"status": ExecutionStatus.PASSED.value, "provider": provider, "final_prompt": final_prompt})
         return result
+    except hosted_limits.HostedLimitError as exc:
+        failure = _failure(
+            status=ExecutionStatus.RATE_LIMITED,
+            provider=provider,
+            model=model_name,
+            code="hosted_capacity_limit",
+            message=str(exc),
+            final_prompt=final_prompt,
+            request_metadata=request_metadata,
+        )
+        failure["metadata"]["retryable"] = False
+        return failure
     except Exception as exc:  # Provider SDKs expose many optional exception classes.
         failure = _failure(
             status=_provider_status(exc),

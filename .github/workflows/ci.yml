@@ -158,3 +158,31 @@ jobs:
           assert len(app.get("download_button")) == 4
           app.session_state["_studio_private_session"].close()
           PY
+      - name: Exercise hosted document and question imports on Linux
+        run: |
+          docker run --rm --memory=1g --network=none -i studio-public-ci python - <<'PY'
+          from io import BytesIO
+          import docx
+          import pandas as pd
+          from pptx import Presentation
+          from src import config
+          from src.document_loader import extract_document_artifact
+          from src.evaluator import read_eval_dataset
+          assert config.hosted_sessions_enabled()
+          assert extract_document_artifact("policy.txt", b"Refunds need review.")["text"]
+          doc = docx.Document()
+          doc.add_paragraph("Refunds need review.")
+          buffer = BytesIO()
+          doc.save(buffer)
+          assert "review" in extract_document_artifact("policy.docx", buffer.getvalue())["text"]
+          slides = Presentation()
+          slides.slides.add_slide(slides.slide_layouts[1]).shapes.title.text = "Escalate disputes"
+          buffer = BytesIO()
+          slides.save(buffer)
+          assert "Escalate" in extract_document_artifact("policy.pptx", buffer.getvalue())["text"]
+          cases = pd.DataFrame([{"question": "Refund?", "expected_answer": "Review", "expected_source": "policy.txt", "category": "refund", "should_escalate": False}])
+          buffer = BytesIO()
+          cases.to_excel(buffer, index=False)
+          assert "Review" in extract_document_artifact("policy.xlsx", buffer.getvalue())["text"]
+          assert len(read_eval_dataset("questions.xlsx", buffer.getvalue())) == 1
+          PY

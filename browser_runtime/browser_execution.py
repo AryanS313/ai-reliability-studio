@@ -19,7 +19,7 @@ from src.domain import ExecutionStatus
 
 # Reviewed with tests/test_browser_execution_adapter.py, including the native
 # retry policy, checkpoint ordering, cache semantics and forbidden thread path.
-EXECUTION_SOURCE_SHA256 = "c19a2522ba70960a72df3bf7d6eced3eb3891a8a8b03b3819bfa6fc26645b32f"
+EXECUTION_SOURCE_SHA256 = "3fd336d77208369bdc4b1e5e5fad6451be901c3ccb94eee0f05e0557c3f0d3e0"
 RUNTIME_VERSION = "browser-sequential-v2"
 _NativeEngine = _execution.ExecutionEngine
 

@@ -8,6 +8,8 @@ from typing import TypedDict
 
 
 def _load_local_environment() -> None:
+    if os.getenv("STUDIO_EXTRACTION_WORKER") == "1":
+        return
     try:
         import dotenv
     except ImportError:  # pragma: no cover - optional dependency guard
@@ -16,7 +18,7 @@ def _load_local_environment() -> None:
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-APP_RELEASE = "2026.09.16.1"
+APP_RELEASE = "2026.09.17.1"
 DATA_DIR = ROOT_DIR / "data"
 SAMPLE_DOCS_DIR = DATA_DIR / "sample_docs"
 PROMPTS_DIR = ROOT_DIR / "prompts"
@@ -27,7 +29,7 @@ _load_local_environment()
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "ai_reliability_studio.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
-APP_ACCESS_MODE = os.getenv("APP_ACCESS_MODE", "public-demo").lower()
+APP_ACCESS_MODE = os.getenv("APP_ACCESS_MODE", "hosted-session").lower()
 AUTH_MODE = os.getenv("AUTH_MODE", "single-user").lower()
 PUBLIC_SESSION_TTL_SECONDS = int(os.getenv("PUBLIC_SESSION_TTL_SECONDS", "86400"))
 AUTH_SESSION_MAX_AGE_SECONDS = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "3600"))
@@ -57,6 +59,14 @@ MAX_EXTRACTED_CHARACTERS = int(os.getenv("MAX_EXTRACTED_CHARACTERS", "5000000"))
 MAX_EXTERNAL_REQUEST_BYTES = int(os.getenv("MAX_EXTERNAL_REQUEST_BYTES", str(2 * 1024 * 1024)))
 MAX_EXTERNAL_RESPONSE_BYTES = int(os.getenv("MAX_EXTERNAL_RESPONSE_BYTES", str(5 * 1024 * 1024)))
 MAX_EXPORT_ROWS = int(os.getenv("MAX_EXPORT_ROWS", "100000"))
+if APP_ACCESS_MODE == "hosted-session" and sys.platform != "emscripten":
+    # Operators may tighten shared-host limits, but cannot silently remove them.
+    MAX_UPLOAD_BYTES = min(MAX_UPLOAD_BYTES, 2 * 1024 * 1024)
+    MAX_DOCUMENTS_PER_UPLOAD = min(MAX_DOCUMENTS_PER_UPLOAD, 8)
+    MAX_DATASET_ROWS = min(MAX_DATASET_ROWS, 500)
+    MAX_EXTRACTED_CHARACTERS = min(MAX_EXTRACTED_CHARACTERS, 250_000)
+    MAX_EXTERNAL_REQUEST_BYTES = min(MAX_EXTERNAL_REQUEST_BYTES, 1024 * 1024)
+    MAX_EXTERNAL_RESPONSE_BYTES = min(MAX_EXTERNAL_RESPONSE_BYTES, 2 * 1024 * 1024)
 REQUIRE_MALWARE_SCAN = os.getenv("REQUIRE_MALWARE_SCAN", "true" if APP_ENV == "production" else "false").lower() in {
     "1",
     "true",
@@ -166,7 +176,12 @@ def api_key_for_provider(provider: str) -> str:
 
 def public_sessions_enabled() -> bool:
     """Explicit anonymous mode; it never weakens the normal production auth mode."""
-    return APP_ACCESS_MODE in {"public-demo", "browser"}
+    return APP_ACCESS_MODE in {"public-demo", "browser", "hosted-session"}
+
+
+def hosted_sessions_enabled() -> bool:
+    """Custom online work runs in an isolated native server session."""
+    return APP_ACCESS_MODE == "hosted-session" and sys.platform != "emscripten"
 
 
 def is_browser_runtime() -> bool:

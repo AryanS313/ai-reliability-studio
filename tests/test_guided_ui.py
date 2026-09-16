@@ -40,11 +40,12 @@ def navigate(app, page):
 
 
 @pytest.fixture
-def private_ui(monkeypatch):
+def private_ui(monkeypatch, request):
+    access_mode = getattr(request, "param", "browser")
     monkeypatch.setattr(config, "AUTH_MODE", "public-session")
-    monkeypatch.setattr(config, "APP_ACCESS_MODE", "browser")
-    monkeypatch.setattr(config, "is_browser_runtime", lambda: True)
-    monkeypatch.setattr(config, "browser_runtime_enabled", lambda: True)
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", access_mode)
+    monkeypatch.setattr(config, "is_browser_runtime", lambda: access_mode == "browser")
+    monkeypatch.setattr(config, "browser_runtime_enabled", lambda: access_mode == "browser")
     monkeypatch.setattr(config, "APP_ENV", "development")
     monkeypatch.setattr(config, "PUBLIC_SESSION_TTL_SECONDS", 3600)
     monkeypatch.setattr(config, "EXTERNAL_TARGET_ALLOWED_HOSTS", ())
@@ -120,6 +121,7 @@ def test_primary_sample_uses_browser_compatible_single_execution_policy(private_
     assert all("Fix connection or provider errors" not in error.value for error in app.error)
 
 
+@pytest.mark.parametrize("private_ui", ["browser", "hosted-session"], indirect=True)
 def test_sample_can_be_reviewed_and_retested_without_provider_calls(private_ui):
     app = private_ui()
     assert {"Try a saved-answer example", "Review saved answers", "Evaluate live assistant"}.issubset(
@@ -179,6 +181,7 @@ def test_sample_can_be_reviewed_and_retested_without_provider_calls(private_ui):
     assert compare_response_reviews(restored_baseline, restored_candidate)["counts"] == {"resolved": 2}
 
 
+@pytest.mark.parametrize("private_ui", ["browser", "hosted-session"], indirect=True)
 def test_uploaded_inputs_import_and_mismatch_is_explained(private_ui, monkeypatch):
     import streamlit as st
 
