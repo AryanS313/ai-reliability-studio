@@ -4,8 +4,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     AUTH_MODE=public-session \
-    APP_ACCESS_MODE=public-demo \
-    APP_ENV=public-demo \
+    APP_ACCESS_MODE=hosted-session \
+    APP_ENV=hosted-beta \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_HEADLESS=true
 

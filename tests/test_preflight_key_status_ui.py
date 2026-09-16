@@ -131,11 +131,11 @@ def test_live_preflight_updates_planned_work_and_never_runs_without_consent(priv
 
     widget(app.radio, "What would you like to check?").set_value("Current Prompt vs Improved Prompt").run(timeout=30)
     if config.is_browser_runtime():
-        assert not any(item.label == "Concurrency" for item in app.slider)
+        assert not any(item.label == "Questions running at once" for item in app.slider)
         assert any("One question runs at a time" in item.value for item in app.caption)
     else:
-        widget(app.slider, "Concurrency").set_value(3)
-    widget(app.slider, "Retryable-error retries").set_value(1).run(timeout=30)
+        widget(app.slider, "Questions running at once").set_value(3)
+    widget(app.slider, "Retries after temporary errors").set_value(1).run(timeout=30)
     assert any(
         "4 planned executions" in item.value and "8 attempts" in item.value and "2 candidate(s)" in item.value
         for item in app.info
@@ -148,7 +148,7 @@ def test_live_preflight_updates_planned_work_and_never_runs_without_consent(priv
     assert app.session_state["last_results"].empty
 
     # Consent is bound to the displayed plan, including retry count and credential.
-    widget(app.slider, "Retryable-error retries").set_value(0).run(timeout=30)
+    widget(app.slider, "Retries after temporary errors").set_value(0).run(timeout=30)
     assert widget(app.button, "Run Evaluation").disabled
     assert any("at most 4 attempts" in item.value for item in app.info)
     consent = next(item for item in app.checkbox if item.label.startswith("I authorize these external calls"))

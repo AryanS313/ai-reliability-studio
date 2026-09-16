@@ -1,7 +1,8 @@
 """Memory-only anonymous workspaces, rebound before every Streamlit rerun.
 
-Public demos accept fictional sample data. A verified WebAssembly browser may
-review custom answers and use session-supplied provider keys. No anonymous mode
+Hosted sessions accept approved custom inputs and visitor-supplied keys. Explicit
+public demos accept fictional sample data. A verified WebAssembly browser may
+also review custom answers and use session-supplied provider keys. No anonymous mode
 opens the configured DB. Memory expires on idle cleanup, reset or process exit.
 """
 
@@ -16,7 +17,7 @@ from typing import Any
 from uuid import uuid4
 from weakref import WeakSet
 
-from src import config, database
+from src import config, database, hosted_limits
 from src.auth import authenticate_request
 from src.domain import Role, WorkspaceContext
 from src.storage import EphemeralSQLiteRepository, Repository, utcnow
@@ -37,7 +38,10 @@ class SessionInitialization:
 
 class PublicSession:
     def __init__(self, *, temporary_root: Path | None = None) -> None:
+        self.access_mode = config.APP_ACCESS_MODE
+        self.budget = hosted_limits.new_session_budget() if config.hosted_sessions_enabled() else None
         self.repository = EphemeralSQLiteRepository()
+        hosted_limits.bind_repository(self.repository, self.budget)
         self.repository.migrate()
         # Session-specific IDs prevent a stale context from another private DB
         # accidentally matching its independently allocated integer IDs.
@@ -45,6 +49,10 @@ class PublicSession:
         workspace_id = uuid4().int & ((1 << 63) - 1)
         session_id = uuid4().hex
         with self.repository.connection() as conn:
+            if self.budget is not None:
+                page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+                page_limit = hosted_limits.HOSTED_MAX_SESSION_DATABASE_BYTES // page_size
+                conn.execute(f"PRAGMA max_page_count = {page_limit}")
             # Migrations seed a development workspace. This database is brand
             # new, so remove that seed to reject stale development contexts.
             conn.execute("DELETE FROM memberships")
@@ -71,6 +79,8 @@ class PublicSession:
     def close(self) -> None:
         """Close this session's memory database only; never the configured DB."""
         with _sessions_lock:
+            if self.budget is not None:
+                self.budget.close()
             self.repository.close()
             self.closed = True
             _sessions.discard(self)
@@ -139,8 +149,12 @@ def initialize_session(
     with _sessions_lock:
         cleanup_expired_sessions()
         session = state.get(_SESSION_KEY)
-        created = not isinstance(session, PublicSession) or session.closed
+        created = (
+            not isinstance(session, PublicSession) or session.closed or session.access_mode != config.APP_ACCESS_MODE
+        )
         if created:
+            if isinstance(session, PublicSession):
+                session.close()
             # In particular, discard any previous single-user data and API keys.
             state.clear()
             session = PublicSession(temporary_root=temporary_root)
@@ -156,7 +170,14 @@ def initialize_session(
         f"It expires after {hours:g} hours of inactivity or a server restart. "
         "This public demo accepts fictional samples only. Export results before leaving."
     )
-    if config.is_browser_runtime():
+    if config.hosted_sessions_enabled():
+        notice = (
+            "Your work is held in this session's private server memory. It is not shared with other visitors. "
+            f"It expires after {hours:g} hours of inactivity, a reset or server restart. "
+            "Download your work before leaving. Only keys you enter are used; real calls send selected inputs "
+            "to your chosen provider or public HTTPS assistant. Use approved, non-sensitive test data."
+        )
+    elif config.is_browser_runtime():
         notice = (
             "Your workspace stays in this tab's memory. Closing or reloading the tab clears it, "
             f"as does returning after {hours:g} hours of inactivity. "

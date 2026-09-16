@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from src import config, database
+from src import config, database, hosted_limits
 from src.calibration import (
     EvaluatorThresholdConfiguration,
     calibration_for_run,
@@ -51,6 +51,10 @@ EVALUATION_UPLOAD_TYPES = ["csv", "tsv", "xlsx", "xls", "json", "jsonl"]
 
 
 def read_eval_dataset(filename: str, data: bytes) -> pd.DataFrame:
+    if config.hosted_sessions_enabled():
+        from src.hosted_documents import read_hosted_dataset
+
+        return read_hosted_dataset(filename, data)
     if len(data) > config.MAX_UPLOAD_BYTES:
         raise ValueError(f"Evaluation dataset exceeds the {config.MAX_UPLOAD_BYTES} byte upload limit.")
     suffix = Path(filename).suffix.lower()
@@ -88,6 +92,7 @@ def normalize_eval_dataset(df: pd.DataFrame) -> pd.DataFrame:
     return normalize_dataset_frame(df, allow_legacy=True)
 
 
+@hosted_limits.guard_run
 def run_evaluation(
     eval_df: pd.DataFrame,
     chunks: list[dict[str, Any]],
@@ -124,6 +129,13 @@ def run_evaluation(
     )
     calibration = calibration_for_run(calibration, threshold_configuration)
     models = model_name if isinstance(model_name, list) else [model_name]
+    hosted_limits.validate_execution_limits(len(dataset) * len(prompts) * len(models), max_concurrency, max_retries)
+    if config.hosted_sessions_enabled() and (
+        len(chunks) > 2000 or sum(len(str(chunk.get("chunk_text", ""))) for chunk in chunks) > 2_000_000
+    ):
+        raise hosted_limits.HostedLimitError(
+            "The source collection exceeds the online evaluation limit. Use fewer documents."
+        )
     vector_store = SimpleVectorStore()
     vector_store.build(chunks)
     context = database.current_context()
@@ -156,6 +168,7 @@ def run_evaluation(
     for selected_model in models:
         adapter = target_adapter or _adapter_for_model(selected_model, api_key)
         effective_retries = adapter.default_retry_count if max_retries is None else max_retries
+        hosted_limits.validate_execution_limits(len(dataset), max_concurrency, effective_retries)
         if isinstance(adapter, ExternalHTTPTarget):
             applies_prompt = adapter.sends_system_prompt
             if len(prompts) > 1 and not applies_prompt:

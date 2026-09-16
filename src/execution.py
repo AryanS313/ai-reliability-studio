@@ -9,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from src import config, hosted_limits
 from src.domain import ExecutionStatus, TargetResponse
 from src.targets import TargetAdapter, TargetConfigurationError
 from src.versioning import canonical_json
@@ -30,8 +31,8 @@ RETRYABLE_STATUSES = {
 
 @dataclass(frozen=True)
 class ExecutionPolicy:
-    max_concurrency: int = 4
-    max_retries: int = 2
+    max_concurrency: int = field(default_factory=lambda: 2 if config.hosted_sessions_enabled() else 4)
+    max_retries: int = field(default_factory=lambda: 1 if config.hosted_sessions_enabled() else 2)
     backoff_seconds: float = 0.5
     maximum_backoff_seconds: float = 10.0
     cache_enabled: bool = True
@@ -136,6 +137,7 @@ class ExecutionEngine:
         cancellation = cancellation or CancellationToken()
         completed = completed or {}
         request_list = list(requests)
+        hosted_limits.validate_execution_limits(len(request_list), self.policy.max_concurrency, self.policy.max_retries)
         records: list[ExecutionRecord] = []
         pending: list[tuple[dict[str, Any], ExecutionRecord]] = []
         for request in request_list:

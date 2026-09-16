@@ -120,7 +120,6 @@ def extract_document_artifact(
     if Path(str(filename)).suffix.lower() == ".doc":
         raise ValueError("Legacy .doc files are not supported reliably. Save the file as .docx and upload it again.")
     safe_name = validate_upload(filename, data, allowed_extensions=SUPPORTED_EXTENSIONS)
-    suffix = Path(safe_name).suffix.lower()
     warnings: list[str] = []
     scan_metadata: dict[str, Any]
     if malware_scanner is None:
@@ -141,6 +140,30 @@ def extract_document_artifact(
             if config.REQUIRE_MALWARE_SCAN:
                 raise ValueError("Malware scanning is unavailable; production ingestion is fail-closed.")
             warnings.append(scan.safe_reason or "Malware scanning was unavailable.")
+    if config.hosted_sessions_enabled():
+        from src.hosted_documents import extract_hosted_document
+
+        if ocr_pipeline is not None:
+            raise ValueError("Hosted document extraction does not yet support an OCR service.")
+        artifact = extract_hosted_document(safe_name, data)
+        artifact["original_filename"] = filename
+        artifact["warnings"] = [*warnings, *artifact["warnings"]]
+        artifact["partially_extracted"] = bool(artifact["warnings"])
+        artifact["malware_scan"] = scan_metadata
+        return artifact
+    return _extract_validated_document(filename, safe_name, data, warnings, scan_metadata, ocr_pipeline)
+
+
+def _extract_validated_document(
+    filename: str,
+    safe_name: str,
+    data: bytes,
+    warnings: list[str],
+    scan_metadata: dict[str, Any],
+    ocr_pipeline: OCRPipeline | None = None,
+) -> dict[str, Any]:
+    """Parse already validated/scanned bytes; hosted calls run in a bounded child."""
+    suffix = Path(safe_name).suffix.lower()
     if suffix in ZIP_BASED_EXTENSIONS:
         _validate_zip_container(data)
     blocks: list[dict[str, Any]] = []

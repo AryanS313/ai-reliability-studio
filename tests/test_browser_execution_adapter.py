@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from browser_runtime import browser_execution as browser
-from src import execution
+from src import config, execution, hosted_limits
 from src.domain import ExecutionStatus, TargetResponse, TargetType
 from src.targets import TargetAdapter, TargetConfigurationError
 
@@ -82,6 +84,44 @@ def test_native_platform_does_not_install_and_cannot_construct_browser_engine(mo
     assert execution.ThreadPoolExecutor is pool
     with pytest.raises(RuntimeError, match="only for Emscripten"):
         browser.BrowserSequentialExecutionEngine(ScriptedTarget())
+
+
+def test_browser_mode_does_not_require_native_hosted_admission(emscripten, monkeypatch):
+    monkeypatch.setattr(config, "APP_ACCESS_MODE", "browser")
+    assert not config.hosted_sessions_enabled()
+    assert execution.ExecutionPolicy().max_retries == 2
+    # Browser admission remains the adapter's bounded sequential policy; a
+    # server-side budget must neither be required nor created on this path.
+    hosted_limits.validate_execution_limits(101, 1, 2)
+    target = ScriptedTarget()
+    engine = browser.BrowserSequentialExecutionEngine(target)
+    records = hosted_limits.guard_run(engine.run)(requests("browser-custom"))
+    assert records[0].status == ExecutionStatus.PASSED
+    assert engine.policy.max_concurrency == 1
+    assert hosted_limits.current_session() is None
+
+
+def test_browser_entry_sets_mode_before_importing_execution_adapter():
+    # Run the real entry script in an isolated interpreter. Stub the two browser
+    # installers and app launch, retaining its actual environment/import order.
+    script = r"""
+import os, runpy, sys, types
+assert 'src.config' not in sys.modules
+def install():
+    from src import config, execution
+    assert config.APP_ACCESS_MODE == 'browser'
+    assert not config.hosted_sessions_enabled()
+    assert execution.ExecutionPolicy().max_retries == 2
+    assert not any(config.PROVIDER_API_KEYS.values())
+sys.modules['browser_execution'] = types.SimpleNamespace(install_browser_execution=install)
+sys.modules['browser_transport'] = types.SimpleNamespace(install_browser_provider_clients=lambda: None)
+entry = open('browser_runtime/entry.py').read()
+runpy.run_path = lambda *args, **kwargs: None
+exec(compile(entry, 'browser_runtime/entry.py', 'exec'), {'__name__': '__main__'})
+"""
+    environment = {**os.environ, "APP_ACCESS_MODE": "hosted-session", "STUDIO_EXTRACTION_WORKER": "1"}
+    result = subprocess.run([sys.executable, "-c", script], env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("limit", [0, -1, True, 1.5, "3"])

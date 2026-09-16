@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,13 @@ from src.migrations import migrate_sqlite
 from src.security import AuthorizationError, redact_pii, redact_secrets, require_role, sanitize_filename
 from src.versioning import text_hash, version_hash
 
+_ACTIVE_TRANSACTION: ContextVar[tuple[Any, Any] | None] = ContextVar("repository_transaction", default=None)
+
+
+def _transaction_connection(repository: Repository) -> Any:
+    active = _ACTIVE_TRANSACTION.get()
+    return active[1] if active is not None and active[0] is repository else None
+
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
@@ -24,6 +33,21 @@ def _json_value(value: Any) -> Any:
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _target_has_raw_secret(configuration: dict[str, Any], target_type: str) -> bool:
+    checked = dict(configuration)
+    if target_type == "external_api" and "response_mappings" in checked:
+        mappings = checked["response_mappings"]
+        # Same path grammar as ExternalTargetConfig. These are extraction paths,
+        # not credential values; every other target field retains normal checks.
+        if not isinstance(mappings, dict) or any(
+            not isinstance(path, str) or (path and not re.fullmatch(r"\$(?:\.[A-Za-z0-9_-]+(?:\[\d+\])?)*", path))
+            for path in mappings.values()
+        ):
+            return True
+        checked.pop("response_mappings")
+    return redact_secrets(checked) != checked
 
 
 def _result_metadata(result: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +127,18 @@ def _hydrate_chunk_warnings(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class Repository(ABC):
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Commit a group of repository operations once, or roll all of them back."""
+        with self.connection() as conn:  # type: ignore[attr-defined]
+            if isinstance(conn, sqlite3.Connection) and not conn.in_transaction:
+                conn.execute("BEGIN")
+            token = _ACTIVE_TRANSACTION.set((self, conn))
+            try:
+                yield
+            finally:
+                _ACTIVE_TRANSACTION.reset(token)
+
     @abstractmethod
     def migrate(self) -> None:
         raise NotImplementedError
@@ -134,6 +170,10 @@ class SQLiteRepository(Repository):
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        active = _transaction_connection(self)
+        if active is not None:
+            yield active
+            return
         conn = sqlite3.connect(self.path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -611,8 +651,7 @@ class SQLiteRepository(Repository):
     ) -> int:
         self.authorize(context, Role.EDITOR)
         self._require_project(context, project_id, allow_none=True)
-        safe_configuration = redact_secrets(configuration)
-        if safe_configuration != configuration:
+        if _target_has_raw_secret(configuration, target_type):
             raise ValueError("Target configuration contains a raw secret; store only secret references.")
         digest = str(configuration.get("version_hash") or version_hash(configuration))
         with self.connection() as conn:
@@ -748,7 +787,8 @@ class SQLiteRepository(Repository):
             payload["metadata_json"] = json.dumps(result.get("metadata", {}), default=str)
         columns = list(payload)
         with self.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             existing_result = conn.execute(
                 """SELECT id FROM eval_results WHERE workspace_id = ? AND run_id = ?
                 AND COALESCE(NULLIF(case_id, ''), NULLIF(question, ''), 'unknown') = ?
@@ -1290,6 +1330,10 @@ class EphemeralSQLiteRepository(SQLiteRepository):
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        active = _transaction_connection(self)
+        if active is not None:
+            yield active
+            return
         with self._lock:
             try:
                 yield self._connection
@@ -1314,6 +1358,10 @@ class PostgresRepository(Repository):
 
     @contextmanager
     def connection(self):
+        active = _transaction_connection(self)
+        if active is not None:
+            yield active
+            return
         try:
             import psycopg
             from psycopg.rows import dict_row
@@ -1741,7 +1789,7 @@ class PostgresRepository(Repository):
     ) -> int:
         self.authorize(context, Role.EDITOR)
         self._require_project(context, project_id, allow_none=True)
-        if redact_secrets(configuration) != configuration:
+        if _target_has_raw_secret(configuration, target_type):
             raise ValueError("Target configuration contains a raw secret; store only secret references.")
         digest = str(configuration.get("version_hash") or version_hash(configuration))
         with self.connection() as conn:

@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import os
+import sqlite3
 import sys
 import time
 import uuid
@@ -27,6 +28,14 @@ from src.datasets import coverage_analysis, dataset_quality_report, validate_dat
 from src.document_loader import UPLOAD_TYPES, detect_duplicate_documents, load_uploaded_document
 from src.domain import ROLE_RANK, Role
 from src.evaluator import EVALUATION_UPLOAD_TYPES, normalize_eval_dataset, read_eval_dataset, run_evaluation
+from src.hosted_limits import (
+    HOSTED_MAX_CONCURRENCY,
+    HOSTED_MAX_EXECUTIONS,
+    HOSTED_MAX_RETRIES,
+    HOSTED_MAX_TIMEOUT_SECONDS,
+    HostedLimitError,
+    run_limit_notice,
+)
 from src.presentation import (
     candidate_title,
     execution_summary,
@@ -74,6 +83,10 @@ from src.versioning import version_hash
 st.set_page_config(page_title="AI Reliability Studio", page_icon="ARS", layout="wide")
 
 PROVIDER_LABELS = {"OpenAI": "openai", "Google Gemini": "gemini", "Anthropic Claude": "anthropic"}
+TARGET_LABELS = {
+    "External assistant/API": "My existing assistant",
+    "Direct foundation model": "A model with my documents",
+}
 PROVIDER_SECRET_NAMES = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
@@ -188,7 +201,7 @@ def effective_api_key() -> str:
     if config.APP_ACCESS_MODE == "public-demo":
         return ""
     provider = selected_provider()
-    if config.is_browser_runtime():
+    if public_session_mode():
         return (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip()
     return (
         (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip()
@@ -201,7 +214,7 @@ def api_key_source() -> str:
     provider = selected_provider()
     if (st.session_state.get("provider_api_keys", {}).get(provider) or "").strip():
         return "In-app session key"
-    if config.APP_ACCESS_MODE in {"public-demo", "browser"}:
+    if public_session_mode():
         return "No API key"
     if streamlit_secret_api_key(provider):
         return "Streamlit secrets"
@@ -223,7 +236,7 @@ def selected_provider() -> str:
 
 
 def streamlit_secret_api_key(provider: str | None = None) -> str:
-    if config.APP_ACCESS_MODE in {"public-demo", "browser"}:
+    if public_session_mode():
         return ""
     if not _streamlit_secrets_file_exists():
         return ""
@@ -246,6 +259,8 @@ def _streamlit_secrets_file_exists() -> bool:
 
 def start_custom_mode() -> None:
     st.session_state.pop("imported_connection_draft", None)
+    st.session_state.pop("project_restore_notice", None)
+    st.session_state.pop("_show_project_restore", None)
     st.session_state.mode = "Custom Upload Mode"
     st.session_state.calibration_result = None
     st.session_state.external_target_config = {}
@@ -363,11 +378,18 @@ def acknowledge_privacy() -> None:
     st.session_state.privacy_acknowledged = bool(st.session_state.privacy_acknowledgement_control)
 
 
+def hosted_upload_options(max_bytes: int | None = None) -> dict[str, int]:
+    """Match native upload affordances to validators without newer browser API calls."""
+    if not config.hosted_sessions_enabled():
+        return {}
+    limit = min(config.MAX_UPLOAD_BYTES, 2 * 1024 * 1024) if max_bytes is None else max_bytes
+    # Streamlit accepts whole MiB; validators retain the exact byte limit.
+    return {"max_upload_size": max(1, (limit + 1024 * 1024 - 1) // (1024 * 1024))}
+
+
 def custom_access(*, require_project: bool = True, minimum_role: Role = Role.EDITOR) -> bool:
     if config.APP_ACCESS_MODE == "public-demo":
-        st.info(
-            "The public demo accepts sample data only. Use a private local workspace for your own sources, credentials and assistant."
-        )
+        st.info("This demonstration accepts fictional sample data only. Custom evaluation is unavailable here.")
         return False
     if ROLE_RANK[st.session_state.workspace_context.role] < ROLE_RANK[minimum_role]:
         st.info(
@@ -375,6 +397,12 @@ def custom_access(*, require_project: bool = True, minimum_role: Role = Role.EDI
         )
         return False
     if not st.session_state.privacy_acknowledged:
+        if config.hosted_sessions_enabled():
+            st.info(
+                "This website processes your uploads and evaluations on its server in an isolated, temporary session. "
+                "Your provider key stays in session memory. Download your project before leaving; a session end, "
+                "inactivity timeout or server restart can clear your work."
+            )
         st.info(
             "Use data you are authorized to evaluate. Sources, prompts and results are stored in this workspace. "
             "Real calls send the selected inputs to your target. Automated redaction is incomplete; remove sensitive data before uploading."
@@ -438,6 +466,72 @@ def project_runs() -> pd.DataFrame:
     return runs[runs["project_id"].eq(st.session_state.project_id)].copy()
 
 
+def render_project_transfer(location: str) -> None:
+    if config.APP_ACCESS_MODE == "public-demo":
+        return
+    if st.session_state.project_id is not None and st.session_state.privacy_acknowledged:
+        from src.project_workspace import export_project_workspace
+
+        st.caption(
+            "Download your project to keep its source passages, questions, saved instructions and review history. "
+            "Credentials are excluded. Treat the download as private data."
+        )
+        try:
+            content = export_project_workspace(
+                database.get_repository(), st.session_state.workspace_context, st.session_state.project_id
+            )
+            st.download_button(
+                "Download project to resume later",
+                content,
+                "reliability-project.json",
+                "application/json",
+                key=f"project_download_{location}",
+            )
+        except (ValueError, AuthorizationError) as exc:
+            st.error(f"The project could not be downloaded: {safe_display_text(exc)}")
+    if st.button("Resume a project", key=f"project_resume_{location}"):
+        st.session_state._show_project_restore = True
+    if not st.session_state.get("_show_project_restore"):
+        return
+    with st.container(border=True):
+        st.subheader("Resume a downloaded project")
+        if not custom_access(require_project=False):
+            return
+        st.caption(
+            "Restore a project download from this app. It creates a separate project and keeps your current work. "
+            "Enter credentials again before connecting. Imported history is not independently verified execution evidence."
+        )
+        saved = st.file_uploader(
+            "Project download",
+            type=["json"],
+            key=f"project_restore_upload_{location}",
+            **hosted_upload_options(20 * 1024 * 1024),
+        )
+        if st.button("Restore project", disabled=saved is None, key=f"project_restore_{location}"):
+            from src.project_workspace import restore_project_workspace
+
+            try:
+                repository = database.get_repository()
+                context = st.session_state.workspace_context
+                restored_id = restore_project_workspace(repository, context, saved.getvalue())
+                project = next(item for item in repository.list_projects(context) if int(item["id"]) == restored_id)
+                restore_project(project)
+                st.session_state.provider_api_keys = dict.fromkeys(PROVIDER_LABELS.values(), "")
+                st.session_state.openai_api_key = ""
+                for key in list(st.session_state):
+                    if str(key).startswith(("provider_secret_", "_provider_key_input_")):
+                        del st.session_state[key]
+                st.session_state.pop("_show_project_restore", None)
+                st.session_state.project_restore_notice = (
+                    "Project restored. Imported history is not independently verified execution evidence. "
+                    "Re-enter credentials and run a fresh evaluation when you are ready."
+                )
+                navigate("History" if not project_runs().empty else "Prepare", "2 · Sources")
+                st.rerun()
+            except (ValueError, TypeError, AuthorizationError) as exc:
+                st.error(f"The project could not be restored: {safe_display_text(exc)}")
+
+
 def render_progress() -> None:
     checks = [
         ("Project", st.session_state.project_id is not None),
@@ -471,7 +565,9 @@ def run_sample_review() -> None:
             cost_threshold_usd=config.COST_THRESHOLD_USD,
             project_id=st.session_state.project_id,
             mode="Sample review",
-            max_concurrency=1 if config.is_browser_runtime() else 4,
+            max_concurrency=(
+                1 if config.is_browser_runtime() else HOSTED_MAX_CONCURRENCY if config.hosted_sessions_enabled() else 4
+            ),
             max_retries=0,
             calibration_result=None,
         )
@@ -519,6 +615,7 @@ def render_provider_settings() -> None:
     st.subheader("Model provider")
     if not custom_access(require_project=True):
         return
+    st.write("Choose the company that will generate answers using your documents and instructions.")
     provider_label = st.selectbox(
         "Provider",
         list(PROVIDER_LABELS),
@@ -533,12 +630,19 @@ def render_provider_settings() -> None:
         type="password",
         key=key_name,
         value=st.session_state.provider_api_keys.get(provider, ""),
-        help="Session memory only. It is excluded from saved projects, events and reports.",
+        help=(
+            "An API key is a private access code from your model-provider account. "
+            "Keep it private like a password. The provider may charge your account for generated answers."
+        ),
     )
     keys = dict(st.session_state.provider_api_keys)
     keys[provider] = key_value.strip()
     st.session_state.provider_api_keys = keys
-    st.caption(f"Key source: {api_key_source()}. Keys are never displayed or saved with evidence.")
+    st.caption(
+        "The key you enter stays only in this open session. It is excluded from project downloads, events and reports. "
+        "Enter it again in a new session."
+    )
+    st.caption(f"Key source: {api_key_source()}.")
     if effective_api_key():
         st.success("A key is configured. Its validity will be checked by the first provider request.")
     else:
@@ -579,14 +683,7 @@ def render_overview() -> None:
                 "Bring approved source documents, expected-answer cases and a staging assistant endpoint or provider key."
             )
             if config.APP_ACCESS_MODE == "public-demo":
-                st.caption(
-                    "This public demo accepts sample data only. Run a private local workspace to evaluate your own assistant."
-                )
-                with st.expander("Start a private workspace"):
-                    st.code(
-                        "APP_ACCESS_MODE=local .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1",
-                        language="bash",
-                    )
+                st.caption("This demonstration uses fictional samples only. Custom evaluation is unavailable here.")
             elif st.button("Start a project", use_container_width=True):
                 start_custom_mode()
                 navigate("Prepare", "1 · Project")
@@ -602,6 +699,7 @@ def render_overview() -> None:
         "Automated findings need source review. A gate summarizes configured checks; it is not launch certification. "
         "Real release evidence also requires representative cases and held-out human calibration."
     )
+    render_project_transfer("start")
 
     with st.expander("Review answers you already have"):
         st.write(
@@ -687,7 +785,14 @@ def render_knowledge_base() -> None:
             type=UPLOAD_TYPES,
             accept_multiple_files=True,
             help="Supports text, Markdown, PDF, DOCX, RTF, CSV/TSV, Excel, JSON/JSONL, HTML, XML/YAML, and PPTX.",
+            **hosted_upload_options(),
         )
+        if config.hosted_sessions_enabled():
+            st.caption(
+                f"Up to {min(config.MAX_DOCUMENTS_PER_UPLOAD, 8)} files per upload, "
+                f"{min(config.MAX_UPLOAD_BYTES, 2 * 1024 * 1024) / 1024 / 1024:g} MB per file. "
+                "Only upload approved, non-sensitive test documents."
+            )
         st.info(privacy_notice())
         st.caption(
             "Legacy .doc and image-only/scanned documents are not supported; convert them to DOCX or searchable PDF first."
@@ -724,7 +829,7 @@ def render_knowledge_base() -> None:
             st.caption(
                 "Passages are matched by meaning and wording."
                 if store.embedder.semantic
-                else "This local search matches wording and related terms. It does not measure your assistant's own search quality."
+                else "Studio's search matches wording and related terms. It does not measure your assistant's own search quality."
             )
             if not results:
                 st.info("No passages matched. Try a more specific question or lower the similarity threshold.")
@@ -810,7 +915,13 @@ def render_eval_dataset() -> None:
             "Upload evaluation dataset",
             type=EVALUATION_UPLOAD_TYPES,
             help="Upload a CSV or spreadsheet of questions. Existing JSON question files also work.",
+            **hosted_upload_options(),
         )
+        if config.hosted_sessions_enabled():
+            st.caption(
+                f"Question files may contain up to {min(config.MAX_DATASET_ROWS, 500)} questions. "
+                f"Each review can generate at most {HOSTED_MAX_EXECUTIONS} answers, including instruction comparisons."
+            )
         upload_digest = hashlib.sha256(uploaded.getvalue()).hexdigest() if uploaded is not None else None
         if uploaded is not None and upload_digest != st.session_state.get("loaded_dataset_upload"):
             try:
@@ -1012,6 +1123,7 @@ def render_evaluator_calibration() -> None:
             "Upload human-reviewed calibration data",
             type=["csv", "json", "jsonl"],
             help="Use the review template to match each independent human review with the automated findings for the same question.",
+            **hosted_upload_options(),
         )
         if uploaded is not None:
             try:
@@ -1228,7 +1340,7 @@ def render_target_setup() -> None:
     if config.is_browser_runtime():
         st.title("Connect a model provider")
         st.info(
-            "This browser can call a model provider with your key. To review your deployed assistant, import its saved answers. Direct API connections are available in the private native app."
+            "This browser edition can call a model provider with your key. To review your deployed assistant here, import its saved answers."
         )
         render_provider_settings()
         st.button(
@@ -1242,19 +1354,31 @@ def render_target_setup() -> None:
         "What are you testing?",
         ["External assistant/API", "Direct foundation model"],
         index=0 if st.session_state.target_kind != "Direct foundation model" else 1,
+        format_func=lambda value: TARGET_LABELS.get(value, value),
         key="connection_choice",
     )
     st.session_state.target_kind = kind
     if kind == "Direct foundation model":
         st.info(
-            "This calls a foundation model with Studio's retrieved context. To test your application's own retrieval and behavior, choose an external assistant."
+            "Choose a model provider and use your uploaded documents to generate answers here. "
+            "This checks the model with Studio's document search; it does not test an existing assistant's own search or tools."
         )
         render_provider_settings()
         st.button("Continue to evaluation", on_click=navigate, args=("Evaluate",))
         return
     st.write(
-        "Use a staging, read-only question-answer endpoint. Ask its owner for the URL, request field and response fields below."
+        "Send your test questions to an assistant your team already runs, then review its answers. "
+        "Use a test version that only answers questions and cannot change records or take actions."
     )
+    st.caption(
+        "Ask your assistant's developer for its question-and-answer web address and access details. "
+        "They can also confirm the question and answer field names below."
+    )
+    if config.hosted_sessions_enabled():
+        st.caption(
+            "Use a public HTTPS address. Private network addresses and redirects are blocked. "
+            "Your access key stays in this temporary session and is excluded from saved connection settings."
+        )
     st.caption(
         "No calls happen until you explicitly run a connection check or evaluation. Action-taking agents are outside this beta's scope."
     )
@@ -1262,7 +1386,12 @@ def render_target_setup() -> None:
         st.caption(
             "Most assistants need only the fields below. Your engineer can supply a settings file for a custom request; its details stay behind the scenes."
         )
-        imported = st.file_uploader("Import connection settings", type=["json"], key="connection_settings_import")
+        imported = st.file_uploader(
+            "Import connection settings",
+            type=["json"],
+            key="connection_settings_import",
+            **hosted_upload_options(min(config.MAX_UPLOAD_BYTES, config.MAX_EXTERNAL_REQUEST_BYTES)),
+        )
         if imported is not None and st.button("Use imported settings"):
             try:
                 from src.connection_settings import parse_connection_settings
@@ -1271,7 +1400,7 @@ def render_target_setup() -> None:
                 st.session_state.imported_connection_draft = settings
                 st.session_state.external_target_secret = ""
                 st.success(
-                    "Settings loaded. Check the assistant name and endpoint, enter any credential, then save the connection."
+                    "Settings loaded. Check the test name and web address, enter the access key if needed, then save the connection."
                 )
             except ValueError as exc:
                 st.error(safe_display_text(exc))
@@ -1279,15 +1408,27 @@ def render_target_setup() -> None:
     stored_request = values.get("request_template") or {"input": "${question}"}
     simple_request = len(stored_request) == 1 and next(iter(stored_request.values())) == "${question}"
     stored_headers = values.get("headers") or {}
+    methods = ["POST", "GET"] if config.hosted_sessions_enabled() else ["POST", "GET", "PUT", "PATCH"]
     saved_auth = (
         "No authentication"
         if values and not stored_headers
         else ("Bearer token" if not stored_headers or "Authorization" in stored_headers else "Custom secret header")
     )
     with st.form("external_connection"):
-        name = st.text_input("Assistant / release name", values.get("name", "Support assistant"), max_chars=120)
+        name = st.text_input(
+            "Name for this test",
+            values.get("name", "Support assistant"),
+            max_chars=120,
+            help="Choose any label you will recognize later, such as Support assistant — September test.",
+        )
         endpoint = st.text_input(
-            "Assistant endpoint", values.get("endpoint", ""), placeholder="https://staging.example.com/answer"
+            "Your assistant’s web address",
+            values.get("endpoint", ""),
+            placeholder="https://staging.example.com/answer",
+            help=(
+                "Ask its developer for the HTTPS address that accepts a question and returns an answer. "
+                "They may call this the API endpoint. A normal chat-page address usually will not work."
+            ),
         )
         c1, c2 = st.columns(2)
         question_field = c1.text_input(
@@ -1304,16 +1445,31 @@ def render_target_setup() -> None:
             "Authentication",
             ["Bearer token", "No authentication", "Custom secret header"],
             index=["Bearer token", "No authentication", "Custom secret header"].index(saved_auth),
+            format_func=lambda value: {
+                "Bearer token": "Access token (Bearer)",
+                "No authentication": "No key needed",
+                "Custom secret header": "API key in a named header",
+            }[value],
+            help=(
+                "This controls how your assistant checks who may use it. Use the option its developer specifies. "
+                "Choose No key needed only if they confirm that the test assistant accepts requests without a key."
+            ),
         )
         header_name = st.text_input(
             "Secret header name (custom authentication only)",
             next(iter(stored_headers)) if saved_auth == "Custom secret header" else "X-API-Key",
+            help="Only needed for API key in a named header. Your developer supplies this name; X-API-Key is one example.",
         )
         secret = st.text_input(
-            "Session-only token or key",
+            "Access token or API key",
             type="password",
             value=st.session_state.external_target_secret,
-            help="Paste the token without Bearer. This value is never saved to the target configuration.",
+            help="Paste the private access code your developer supplies. For a Bearer token, paste only the token, without the word Bearer.",
+        )
+        st.caption(
+            "Treat this access code like a password. It is hidden while you type and kept only in this open session, "
+            "so enter it again next time. It is excluded from saved connections and project downloads. "
+            "Leave it empty when No key needed is selected."
         )
         with st.expander("Optional response fields and advanced request"):
             citation_path = st.text_input(
@@ -1336,15 +1492,26 @@ def render_target_setup() -> None:
                 st.info("Your engineer's custom request is saved. Leave this option off to keep it unchanged.")
             method = st.selectbox(
                 "Request method",
-                ["POST", "GET", "PUT", "PATCH"],
-                index=["POST", "GET", "PUT", "PATCH"].index(values.get("method", "POST")),
+                methods,
+                index=methods.index(values.get("method", "POST")) if values.get("method", "POST") in methods else 0,
             )
             streaming = st.checkbox("Streaming SSE response", bool(values.get("streaming", False)))
             timeout = st.number_input(
-                "Timeout seconds", min_value=0.1, max_value=120.0, value=float(values.get("timeout_seconds", 30))
+                "Timeout seconds",
+                min_value=0.1,
+                max_value=HOSTED_MAX_TIMEOUT_SECONDS if config.hosted_sessions_enabled() else 120.0,
+                value=min(
+                    float(values.get("timeout_seconds", 30)),
+                    HOSTED_MAX_TIMEOUT_SECONDS if config.hosted_sessions_enabled() else 120.0,
+                ),
             )
             retries = st.number_input(
-                "Retries after transient errors", min_value=0, max_value=3, value=int(values.get("retry_count", 0))
+                "Retries after transient errors",
+                min_value=0,
+                max_value=HOSTED_MAX_RETRIES if config.hosted_sessions_enabled() else 3,
+                value=min(
+                    int(values.get("retry_count", 0)), HOSTED_MAX_RETRIES if config.hosted_sessions_enabled() else 3
+                ),
             )
             health_path = st.text_input(
                 "Read-only health path (optional)", values.get("health_check_path") or "", placeholder="/health"
@@ -1483,7 +1650,13 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
         st.session_state.target_kind = target_options[0]
     if st.session_state.get("_evaluation_target") not in target_options:
         st.session_state._evaluation_target = st.session_state.target_kind
-    target_kind = st.radio("Evaluation target", target_options, key="_evaluation_target", horizontal=True)
+    target_kind = st.radio(
+        "Evaluation target",
+        target_options,
+        format_func=lambda value: TARGET_LABELS.get(value, value),
+        key="_evaluation_target",
+        horizontal=True,
+    )
     st.session_state.target_kind = target_kind
     if target_kind != "Synthetic demonstration" and not custom_access():
         return
@@ -1553,7 +1726,7 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
 
     with st.expander("Retrieval, limits and advanced controls"):
         c1, c2, c3, c4 = st.columns(4)
-        top_k = c1.slider("top_k retrieval", 1, 8, config.DEFAULT_TOP_K)
+        top_k = c1.slider("Source passages per question", 1, 8, config.DEFAULT_TOP_K)
         similarity_threshold = c2.slider(
             "Minimum similarity",
             0.0,
@@ -1568,14 +1741,26 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
             "Cost gate (USD)", min_value=0.0, value=config.COST_THRESHOLD_USD, step=0.005, format="%.3f"
         )
         c1, c2 = st.columns(2)
-        max_concurrency = 1 if config.is_browser_runtime() else c1.slider("Concurrency", 1, 16, 4)
+        max_concurrency = (
+            1
+            if config.is_browser_runtime()
+            else c1.slider(
+                "Questions running at once",
+                1,
+                HOSTED_MAX_CONCURRENCY if config.hosted_sessions_enabled() else 16,
+                HOSTED_MAX_CONCURRENCY if config.hosted_sessions_enabled() else 4,
+            )
+        )
         if config.is_browser_runtime():
             c1.caption("One question runs at a time in this browser.")
         max_retries = c2.slider(
-            "Retryable-error retries",
+            "Retries after temporary errors",
             0,
-            3,
-            int(st.session_state.external_target_config.get("retry_count", 1))
+            HOSTED_MAX_RETRIES if config.hosted_sessions_enabled() else 3,
+            min(
+                int(st.session_state.external_target_config.get("retry_count", 1)),
+                HOSTED_MAX_RETRIES if config.hosted_sessions_enabled() else 3,
+            )
             if target_kind == "External assistant/API"
             else 0,
         )
@@ -1589,6 +1774,14 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
         prompts["Improved Prompt"] = st.session_state.improved_prompt
 
     calls = len(st.session_state.eval_df) * len(prompts)
+    if config.hosted_sessions_enabled():
+        st.caption(run_limit_notice())
+        if calls > HOSTED_MAX_EXECUTIONS:
+            st.error(
+                f"This review would run {calls} answers. The hosted limit is {HOSTED_MAX_EXECUTIONS} per review. "
+                "Use fewer questions or check one set of instructions at a time."
+            )
+            ready = False
     st.info(
         f"Preflight: {st.session_state.eval_df['case_id'].nunique() if 'case_id' in st.session_state.eval_df else len(st.session_state.eval_df)} "
         f"unique cases · {calls} planned executions · at most {calls * (1 + max_retries)} attempts including retries · {len(prompts)} candidate(s). "
@@ -1663,7 +1856,7 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
         if model == "mock-model" and mock_scenario != "__per_case__":
             evaluation_frame["mock_scenario"] = mock_scenario
         try:
-            with st.spinner("Running reliability evaluation with checkpoints and explicit error states..."):
+            with st.spinner("Checking answers and saving progress…"):
                 results = run_evaluation(
                     eval_df=evaluation_frame,
                     chunks=st.session_state.chunks,
@@ -1800,6 +1993,12 @@ def render_results_dashboard() -> None:
     st.info(
         "Better or safer than the baseline? Use Release history after evaluating a revision on the same cases. Synthetic or incompatible evidence cannot establish improvement."
     )
+    if not synthetic and st.session_state.get("calibration_result") is None:
+        st.button(
+            "Check agreement with human reviewers",
+            on_click=navigate_to,
+            args=("Evaluator Calibration",),
+        )
     if not synthetic and st.session_state.workspace_context.role != Role.VIEWER:
         with st.form("review_decision"):
             st.subheader("Record the team's next step")
@@ -2030,6 +2229,9 @@ def render_prompt_comparison() -> None:
 
 def render_run_history() -> None:
     st.title("Run History / Comparison")
+    render_project_transfer("history")
+    if st.session_state.get("project_restore_notice"):
+        st.info(st.session_state.project_restore_notice)
     runs = project_runs()
     if runs.empty:
         st.info("No historical runs are available in this workspace.")
@@ -2204,13 +2406,14 @@ def render_run_history() -> None:
 
 def render_settings_export() -> None:
     st.title("Export and workspace settings")
+    st.caption(f"Application release {config.APP_RELEASE} · Evaluation rules {EVALUATOR_VERSION}")
     render_exports()
     st.divider()
     if config.APP_ACCESS_MODE != "public-demo":
         with st.expander("Provider credentials"):
             render_provider_settings()
     st.caption(
-        "Local product events store allowlisted counts, timings and choices in the workspace audit log. "
+        "Product events store counts, timings and choices in this workspace's audit log. "
         "No document text, prompts, answers, credentials or personal data are sent to an analytics service."
     )
     if config.APP_ACCESS_MODE == "public-demo":
@@ -2239,6 +2442,7 @@ def export_clicked(report_format: str, content: str, run_id: int | None) -> None
 
 
 def render_exports() -> None:
+    render_project_transfer("exports")
     frame = charts.prepare_results(st.session_state.last_results)
     if frame.empty:
         st.info("Complete an evaluation and select its result to export a report.")
@@ -2336,6 +2540,8 @@ def external_connections_available() -> bool:
     # The interpreter platform is authoritative and independent of that cache.
     if sys.platform == "emscripten":
         return False
+    if config.hosted_sessions_enabled():
+        return True
     return not public_session_mode() or bool(config.EXTERNAL_TARGET_ALLOWED_HOSTS)
 
 
@@ -2444,7 +2650,12 @@ def render_saved_import() -> None:
         st.caption(
             "Upload the workspace file you downloaded earlier to continue with its sources, answers and reviews."
         )
-        saved = st.file_uploader("Workspace file exported by this app", type=["json"], key="resume_saved_workspace")
+        saved = st.file_uploader(
+            "Workspace file exported by this app",
+            type=["json"],
+            key="resume_saved_workspace",
+            **hosted_upload_options(),
+        )
         if st.button("Resume review", disabled=saved is None):
             try:
                 install_review_workspace(read_review_workspace(saved.getvalue()))
@@ -2468,13 +2679,20 @@ def render_saved_import() -> None:
             accept_multiple_files=True,
             key="saved_sources_upload",
             help="For source JSON, use the passage format in the starter files. TXT, Markdown, PDF and DOCX also work.",
+            **hosted_upload_options(),
         )
         c1, c2 = st.columns(2)
         dataset_file = c1.file_uploader(
-            "Questions and expected answers", type=EVALUATION_UPLOAD_TYPES, key="saved_questions_upload"
+            "Questions and expected answers",
+            type=EVALUATION_UPLOAD_TYPES,
+            key="saved_questions_upload",
+            **hosted_upload_options(),
         )
         answer_file = c2.file_uploader(
-            "Saved assistant answers", type=["json", "jsonl", "csv"], key="saved_answers_upload"
+            "Saved assistant answers",
+            type=["json", "jsonl", "csv"],
+            key="saved_answers_upload",
+            **hosted_upload_options(),
         )
         c1, c2 = st.columns(2)
         target_name = c1.text_input("Assistant name", placeholder="Customer support assistant", key="saved_target_name")
@@ -2647,7 +2865,12 @@ def render_saved_retest(workspace: dict, baseline: pd.DataFrame, candidate: pd.D
     with st.expander(
         "Add replacement answers", expanded=bool(baseline["review_status"].eq("reviewed").all() and candidate.empty)
     ):
-        uploaded = st.file_uploader("Replacement answer file", type=["json", "jsonl", "csv"], key="replacement_upload")
+        uploaded = st.file_uploader(
+            "Replacement answer file",
+            type=["json", "jsonl", "csv"],
+            key="replacement_upload",
+            **hosted_upload_options(),
+        )
         c1, c2 = st.columns(2)
         c1.text_input("Replacement version or batch name", key="replacement_version")
         c2.text_input(
@@ -2797,7 +3020,11 @@ def render_live_assistant() -> None:
     if step == steps[0]:
         st.write("Add the documents that contain the answers your assistant should use.")
         files = st.file_uploader(
-            "Source documents", type=UPLOAD_TYPES, accept_multiple_files=True, key="live_source_upload"
+            "Source documents",
+            type=UPLOAD_TYPES,
+            accept_multiple_files=True,
+            key="live_source_upload",
+            **hosted_upload_options(),
         )
         if files and st.button("Add sources", type="primary"):
             if save_uploaded_documents(files):
@@ -2811,11 +3038,17 @@ def render_live_assistant() -> None:
             render_knowledge_base()
     elif step == steps[1]:
         uploaded = st.file_uploader(
-            "Question set with expected answers", type=EVALUATION_UPLOAD_TYPES, key="live_questions_upload"
+            "Question set with expected answers",
+            type=EVALUATION_UPLOAD_TYPES,
+            key="live_questions_upload",
+            **hosted_upload_options(),
         )
-        if uploaded:
+        upload_digest = hashlib.sha256(uploaded.getvalue()).hexdigest() if uploaded is not None else None
+        if uploaded is not None and upload_digest != st.session_state.get("loaded_dataset_upload"):
             try:
                 st.session_state.eval_df = read_eval_dataset(uploaded.name, uploaded.getvalue())
+                save_dataset_snapshot()
+                st.session_state.loaded_dataset_upload = upload_digest
             except Exception as exc:
                 workflow_error(exc, "read the question set")
         frame = st.session_state.eval_df
@@ -2871,6 +3104,10 @@ def main() -> None:
     apply_theme()
     try:
         init_state()
+    except HostedLimitError as exc:
+        st.error(safe_display_text(exc))
+        st.button("Try opening the workspace again")
+        st.stop()
     except (PermissionError, ValueError):
         st.error(
             "Workspace access could not be authorized. Ask the workspace owner to check the access mode and identity configuration."
@@ -2939,13 +3176,15 @@ def main() -> None:
         st.sidebar.info("Private sample session · Temporary · No external calls")
     elif config.is_browser_runtime():
         st.sidebar.caption("Private browser workspace · Download your work before closing this tab")
+    elif config.hosted_sessions_enabled():
+        st.sidebar.caption("Private hosted session · Temporary · Download your project before leaving")
     elif config.APP_ACCESS_MODE == "local":
         st.sidebar.caption("Private local workspace · Saved on this computer")
     else:
         st.sidebar.caption("Authenticated workspace")
     if st.session_state.get("public_session_notice"):
         st.sidebar.caption(st.session_state.public_session_notice)
-    if config.APP_ACCESS_MODE in {"public-demo", "browser"}:
+    if public_session_mode():
         st.sidebar.button("End session and clear my data", on_click=end_public_session, args=(st.session_state,))
     if st.session_state.project_id:
         st.sidebar.write(safe_display_text(st.session_state.project.get("name")))
@@ -2975,7 +3214,16 @@ def main() -> None:
         st.warning(warning)
     if tool != "Review saved answers":
         st.session_state.pop("_show_resume_workspace", None)
-    pages[tool if tool != "Choose a tool" else page]()
+    try:
+        pages[tool if tool != "Choose a tool" else page]()
+    except sqlite3.DatabaseError as exc:
+        if not config.hosted_sessions_enabled() or "full" not in str(exc).lower():
+            raise
+        st.error(
+            "This session has reached its storage limit. Download your project to keep your saved work, "
+            "then end this session before starting another review."
+        )
+        st.button("Open saved projects and downloads", on_click=navigate, args=("Start",))
 
 
 if __name__ == "__main__":

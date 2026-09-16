@@ -1,6 +1,6 @@
 # Product brief: a release check for knowledge support assistants
 
-**Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
+**Acceptance correction (17 September 2026):** the owner discovered and rejected the primary site's sample-only restriction and the requirement to install locally for custom work. That restriction was an agent implementation decision motivated by safety, not an approved product boundary. The requested main-site journey remains a **technical alpha with an open hosted-workflow release blocker**; a separate bounded browser beta is published. Prior merge, CI and bounded deployment checks remain facts, not proof of complete product acceptance. The [release review](release-review.md) and [living product history](../PRODUCT_EVOLUTION.md) retain their scope. Customer and commercial outcomes remain unmeasured.
 
 Research date: 16 September 2026. Status: **evidence-informed ICP hypothesis; customer demand is not yet validated**. No interviews, design partners, retention, willingness to pay, or customer outcomes are claimed by this document.
 
@@ -15,6 +15,12 @@ Team size and the 30-day window are recruitment filters to test, not market-size
 **Positioning:** “Catch policy and answer regressions before your next support-assistant release.”
 
 **Value proposition:** turn a staging endpoint, approved source material, and expected behaviors into a reviewable release evidence packet: execution failures separated from answer failures; serious exceptions surfaced before averages; exact candidate inputs recorded; missing evidence explicit.
+
+**Required delivery experience:** a nontechnical visitor must be able to complete the guided custom journey online on the main site: create a project, provide approved sources and cases, connect an assistant through understandable fields, authorize evaluation, inspect and export evidence, and return to compare a revision. An engineer may supply the assistant's integration details; a repository checkout, local installation or raw JSON configuration must not be required to use the product. This is an owner requirement, not a validated customer outcome. The current main site remains sample-only; the hosted correction is in progress and not yet shipped or accepted. The Cloudflare decision is paused.
+
+**Local progress, not deployment:** the hosted candidate includes project download/resume for temporary sessions. It preserves stored source passages and versioned inputs, along with explicitly unverified historical results and decisions. Original uploaded binaries are not included; credentials and qualifying calibration do not transfer. Local sample download/restore/review/export and focused automated checks passed, as scoped in the release review. This does not yet establish the full custom journey on the main site or a customer's repeat use.
+
+The combined local candidate has since passed **1,203 tests with zero skips** and **87.53% source coverage**, including six PostgreSQL service checks. The [hosted workflow review](hosted-workflow-review.md) records the complete verification scope and partial actual-browser custom journey. New CI, deployment, complete final-origin acceptance and customer/commercial evidence remain pending or unmeasured; these engineering counts do not validate the ICP or adoption thesis.
 
 ## Why this audience
 
@@ -82,13 +88,15 @@ Versioning, HTTP support, dashboards, “RAG evals,” and human review are **no
 
 ## Non-goals and design-partner release boundary
 
-In scope: the published tab-local browser beta for approved non-sensitive saved-answer review and explicit-key supported model calls; an isolated sample-only native public demonstration; and a trusted local/private pilot for read-only support answers, versioned test material, bounded HTTP/model execution, inspectable evaluation, manual domain review and repeatable comparisons. The pilot owner supplies lawful-to-use test data, a staging endpoint, and an independent reviewer. A local synthetic/reference server is a transport test, not a real customer integration or quality proof.
+**Required release scope:** the full hosted custom workflow above, with isolation, privacy consent, explicit credentials, bounded uploads and external calls, inspectable evidence and repeatable comparisons. Sample-only hosting plus local/private custom use does not satisfy this boundary. Safety controls must be implemented within the hosted journey rather than used to redefine the product as a demonstration.
+
+**Currently delivered, narrower scope:** a tab-local browser beta for approved non-sensitive saved-answer review and explicit-key supported model calls; a sample-only native public site; and a trusted local/private workflow for read-only support answers. These capabilities remain useful but do not establish completion of the requested main-site product. The pilot owner supplies lawful-to-use test data, a staging endpoint and an independent reviewer. A local synthetic/reference server is a transport test, not a real customer integration or quality proof.
 
 Out of scope: autonomous transaction/action approval, medical/credit/legal decision certification, universal agent benchmarks, replacing observability stacks, automatic fixes sent to production, continuous production monitoring promises, training models, or a generic analytics dashboard.
 
 Enterprise requirements may remain explicit: managed identity and provisioning, validated PostgreSQL/RLS, durable jobs and storage, retention/backups, malware scanning/OCR, operational monitoring, load/recovery validation, and formal assurance. Do not accept sensitive partner data in a deployment whose applicable controls have not been verified. An evidence packet informs a human release decision; it does not certify production safety.
 
-**Current evidence limit:** native, actual Wasm and observed published-browser checks establish their exercised behavior and bounded controls. Independent first-time comprehension, adoption, real endpoint compatibility, evaluator adequacy in a customer's domain, recurring value, and willingness to continue require design-partner participation. See [discovery plan](discovery-plan.md) and [success metrics](success-metrics.md).
+**Current evidence limit:** native, actual Wasm and observed published-browser checks establish their exercised behavior and bounded controls. They do not establish the missing online custom journey. Its implementation and actual hosted acceptance come before a completion claim. Independent first-time comprehension, adoption, real endpoint compatibility, evaluator adequacy in a customer's domain, recurring value and willingness to continue require design-partner participation. See [discovery plan](discovery-plan.md) and [success metrics](success-metrics.md).
 
 ## Published workflow versus the recruitment hypothesis
 

@@ -32,10 +32,10 @@ def test_new_ui_renders_with_config_cached_from_before_browser_release(monkeypat
         app.radio(key="navigation").set_value("Evaluate").run(timeout=30)
         assert not app.exception
         if access_mode == "browser":
-            assert not any(widget.label == "Concurrency" for widget in app.slider)
+            assert not any(widget.label == "Questions running at once" for widget in app.slider)
             assert any("One question runs at a time" in item.value for item in app.caption)
         else:
-            assert any(widget.label == "Concurrency" for widget in app.slider)
+            assert any(widget.label == "Questions running at once" for widget in app.slider)
         if access_mode == "public-demo":
             assert next(widget for widget in app.radio if widget.label == "Evaluation target").options == [
                 "Synthetic demonstration"
