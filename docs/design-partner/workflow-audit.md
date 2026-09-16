@@ -1,5 +1,7 @@
 # Core workflow baseline and verification
 
+**17 September correction:** the requested workflow must be complete online on the main site. The agent's sample-only restriction was not owner-approved; local installation does not resolve it. The [hosted workflow review](hosted-workflow-review.md) records the new local implementation, 1,203 passing tests with zero skips and 87.53% source coverage, bounded browser observations and portable project recovery. New remote CI, deployed custom acceptance and real account/customer evidence remain pending. Preserve the earlier baseline and focused counts below with their original scope.
+
 **Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
 
 Baseline inspection: 2026-09-16, commit `d2fb73e`, before the core fixes described below. The branch was initially clean. This is an engineering audit, not customer research or measured adoption. The release review records subsequent integrated and published-browser observations; this baseline table is historical.

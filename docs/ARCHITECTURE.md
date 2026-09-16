@@ -33,7 +33,8 @@ This diagram describes responsibility, not a durable distributed deployment. The
 
 | Mode | Identity and repository | Allowed workflow |
 |---|---|---|
-| `public-demo` (default) | Dedicated `EphemeralSQLiteRepository` in each Streamlit session; no shared persistent database opened by that UI session | Bundled sample only; synthetic adapters; no custom upload, credential, provider or external call |
+| `hosted-session` (new native default) | Private temporary database, random identity and bounded session budget per visitor; no shared persistent database | Custom data/reviews, explicit session keys, guarded public HTTPS targets, bounded runs and project download/restore on the main site |
+| `public-demo` (optional) | Dedicated `EphemeralSQLiteRepository` in each Streamlit session; no shared persistent database opened by that UI session | Explicitly restricted sample deployment; not the main-site product requirement |
 | `local` | Explicit trusted operator and persistent SQLite; loopback server binding | Approved custom evaluation, session/configured keys, saved release history |
 | `authenticated` | Trusted proxy identity on each rerun, provisioned membership/role and managed PostgreSQL/RLS deployment | Shared partner use only after infrastructure controls are verified |
 
@@ -49,6 +50,9 @@ The local CLI is a separate trusted-operator interface. It creates a SQLite proj
 | Identity and security | `auth.py`, `security.py` | Trusted identity resolution, stored role checks, safe filenames/input limits, pattern and known-credential redaction |
 | Persistence | `storage.py`, `database.py`, `migrations.py` | Session/context binding, ephemeral or persistent workspace repositories, immutable versions, idempotent results, audits |
 | Inputs | `datasets.py`, `document_loader.py`, `chunker.py` | Strict cases, extraction warnings, deduplication, passage/source provenance |
+| Hosted input containment | `hosted_documents.py`, `hosted_document_worker.py` | Credential-free parser subprocess, wall-time/CPU/output bounds and Linux memory limits; not an OS security sandbox |
+| Hosted service admission | `hosted_limits.py`, `public_sessions.py` | Session/process capacity and call limits, per-session run exclusion, memory-only authorization binding |
+| Project portability | `project_workspace.py` | Bounded structured project downloads and atomic restoration; supplied provenance never becomes authenticated live evidence |
 | Retrieval | `embeddings.py`, `vector_store.py`, `retrieval.py` | Pluggable embeddings, lexical/TF-IDF hybrid search, filtering, reference-retrieval metrics |
 | Targets | `targets.py`, `llm_client.py` | Synthetic/provider/HTTP adapters, explicit credentials and destinations, response parsing, safe failures |
 | Execution | `execution.py`, `evaluator.py` | Concurrency, retry/backoff/cancellation helpers, execution keys, candidate runs, persisted status and measurements |

@@ -24,7 +24,21 @@ python3.12 -m venv .venv
 
 An `.env` file is optional. Use shell variables for mode selection or copy selected settings from `.env.example` into a private configuration. Never overwrite an existing `.env` as part of setup and never commit credentials. Blank provider credentials are sufficient for the synthetic sample.
 
-## Public sample mode: safe default
+## Hosted beta mode: native default
+
+These are operator/developer instructions. Visitors use the main site without installing software. The September 17 hosted-workflow correction is in progress; source presence alone does not establish deployment. See the release record for actual acceptance.
+
+```bash
+APP_ACCESS_MODE=hosted-session APP_ENV=hosted-beta .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
+```
+
+Each visitor receives a separate memory-only database and session identity, with no access to the configured persistent database or owner credentials. Hosted sessions expose custom projects, uploads, cases, saved-answer review, visitor-key providers and public HTTPS assistant connections through the website. Custom inputs require data-handling acknowledgment and a saved project; network checks and evaluations require explicit consent.
+
+Hosted limits include 2 MiB per document, eight files per batch, 500 dataset rows, 250,000 extracted characters per document, 100 case–candidate executions per run, two simultaneous calls per session, one retry and a 30-second request timeout. Process/session admission and memory-database ceilings bound one process; they are not distributed abuse prevention. Document and spreadsheet parsing runs in separate workers with scrubbed environments, Python parser network APIs denied, wall-time/CPU/output bounds and Linux address-space limits. These workers are not operating-system security sandboxes or malware scanners. Production scanner requirements still fail closed.
+
+Temporary projects must be downloaded before a session ends and restored through the site. Closing, expiry or a restart can lose unexported work. A downloaded project contains private source material and is different from a redacted report. Imported evidence remains identified as user-supplied; restoring a file does not authenticate its claims. Credentials must be re-entered. Managed accounts, cloud persistence, confidential-data infrastructure and durable jobs remain separately validated work.
+
+## Optional sample-only mode
 
 ```bash
 APP_ACCESS_MODE=public-demo .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
@@ -38,7 +52,7 @@ New sessions and process restarts do not restore earlier sample data. Idle expir
 
 The [browser app](https://ai-reliability-studio.a3103.chatgpt.site/) serves Studio and pinned Python/WebAssembly assets from the web host. It does not run a persistent Streamlit server for each visitor. `APP_ACCESS_MODE=browser` is set by the browser bootstrap and accepted only when `sys.platform == "emscripten"`. A native process with that environment value fails closed; it must use one of the native access modes instead.
 
-The retained browser runtime is **Stlite 0.76.0 / Streamlit 1.41.0, Pyodide 0.26.4 / Python 3.12.1**. Native verification uses **Python 3.12.14** and its separate locked dependencies. Presentation compatibility must be checked against the embedded Streamlit version. The browser's saved-answer workflow supports uploads, explicit source review, replacements and resumable downloads. Direct generation uses a restricted provider worker; custom assistant HTTP endpoints are unavailable in this runtime. Use native local mode or import saved answers for an existing assistant.
+The retained browser runtime is **Stlite 0.76.0 / Streamlit 1.41.0, Pyodide 0.26.4 / Python 3.12.1**. Native verification uses **Python 3.12.14** and its separate locked dependencies. Presentation compatibility must be checked against the embedded Streamlit version. The browser's saved-answer workflow supports uploads, explicit source review, replacements and resumable downloads. Direct generation uses a restricted provider worker; custom assistant HTTP endpoints are unavailable in this runtime. The native hosted-session workflow provides the online assistant connection; visitors should not be sent to a local install.
 
 Browser work lives in tab memory with no automatic durable save. Closing/reloading the tab or returning after the 24-hour inactivity limit clears unexported work. The resumable workspace contains source text, answers and review notes; an HTML/JSON/CSV report is not a workspace backup. Asset caches store application files, not the review workspace. Device sleep, suspended tabs and hosting failures can interrupt execution.
 
@@ -69,14 +83,14 @@ Browser dependency security is assessed separately from native `pip-audit` and t
 
 ## Native public container
 
-The root Dockerfile uses a non-root runtime and an explicit source copy list that excludes credentials, environment files and databases. Start a local preview with explicit sample-only mode:
+The root Dockerfile uses a non-root hosted-session runtime and an explicit source copy list that excludes credentials, environment files and databases. An operator can preview the hosted workflow with:
 
 ```bash
 docker build -t ai-reliability-studio .
-docker run --rm -e APP_ACCESS_MODE=public-demo -p 127.0.0.1:8501:8501 ai-reliability-studio
+docker run --rm -p 127.0.0.1:8501:8501 ai-reliability-studio
 ```
 
-A public installation needs HTTPS with WebSocket support and resource/abuse controls. Keep XSRF protection enabled. `/_stcore/health` checks process availability; separately exercise the UI. In native public-demo mode, custom uploads, provider-key execution and external assistant calls remain disabled even if an allowlist is set. Restart policies do not override a host's inactivity policy; see [hosting options](HOSTING_OPTIONS.md).
+A public installation needs HTTPS with WebSocket support and resource/abuse controls. Keep XSRF protection enabled. `/_stcore/health` checks process availability; separately exercise custom uploads, connections, evaluation, project restoration and independent visitor isolation. Optional explicit public-demo mode still disables custom work. Restart policies do not override a host's inactivity policy; see [hosting options](HOSTING_OPTIONS.md).
 
 ## Private design-partner workspace
 

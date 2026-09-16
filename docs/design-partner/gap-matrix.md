@@ -1,5 +1,7 @@
 # Design-partner gap matrix
 
+**17 September correction:** the owner rejected the unapproved sample-only main site and local-install requirement. The complete hosted custom journey is a release blocker; its local implementation now passes 1,203 tests with zero skips and 87.53% source coverage, while new CI, deployment and final-origin acceptance remain pending. See the [hosted workflow review](hosted-workflow-review.md) for the added gap/change matrix, bounds and missing evidence. The dated baseline and earlier bounded verification below remain historical, not proof that this requirement was already met.
+
 **Delivery context (16 September 2026):** the integrated bounded beta is published. The [release review](release-review.md) records exact verification and delivery results; the [living product history](../PRODUCT_EVOLUTION.md) separates deployed, branch, main and proposed work. Dated baseline/focused results below retain their original scope. Customer and commercial outcomes remain unmeasured.
 
 Date: 16 September 2026. Baseline: clean local `feature` snapshot `d2fb73e`, before this work. Supported Python 3.12.14 baseline: 145 tests passed, 4 PostgreSQL service tests skipped, 76.96% reported coverage. This matrix began as a **pre-integration local before/after audit**. The originally deployed browser app was newer than that local baseline; the integrated beta has since been published. Baseline local vulnerabilities are not claims of confirmed live exploitation or exposure.

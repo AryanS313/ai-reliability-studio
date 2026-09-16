@@ -2,6 +2,21 @@
 
 This technical changelog complements the [living product history and PM handoff](docs/PRODUCT_EVOLUTION.md). Package version, application release, evaluator identity and hosting version are separate; they do not independently prove deployment or readiness.
 
+## Application 2026.09.17.1 — hosted custom workflow correction
+
+Locally committed and verified; GitHub checks, merge and primary-site deployment receipts are tracked in the [hosted workflow review](docs/design-partner/hosted-workflow-review.md). Package remains 1.0.0, evaluator `deterministic-v8`, report schema 2.1. Do not infer deployment from this entry.
+
+- Correct the unapproved sample-only restriction: make isolated, temporary custom workspaces the native default. Keep project preparation, uploads, prompt editing, assistant/provider setup, consented execution, review, comparisons and exports on the main website.
+- Record the owner's non-negotiable main-site requirement in `AGENTS.md`; customer onboarding must never require a terminal, installation or local workspace.
+- Preserve per-visitor memory databases, fresh session credentials, privacy acknowledgment and explicit external-call consent; prevent use of deployment-owner keys and shared persistent storage.
+- Bound session/database/run/call capacity and retries. Permit public HTTPS assistant endpoints through validated DNS, pinned TLS and redirect/proxy restrictions; keep private destinations blocked.
+- Process document and question files in credential-stripped subprocesses with bounded input/output, one parser slot, CPU/wall-time limits and Linux address-space limits. These are resource controls, not an OS sandbox or malware scanner.
+- Add private project download/resume with schema and checksum validation, single restore admission and atomic rollback. Restored real-run history is explicitly unverified; synthetic history stays synthetic and qualifying calibration is not imported. Credentials must be entered again.
+- Fix malformed restored cases/targets, valid token-usage paths incorrectly detected as secrets, and successful HTTPS responses rejected after their completed socket closed. Preserve execution failures outside quality averages.
+- Align visible upload limits with validators: ordinary hosted files 2 MiB, connection settings 1 MiB, project archives 20 MiB. Preserve the older browser runtime's uploader API.
+- Extend hosted workflow, isolation, transport, parser and restore regressions; add Linux container import checks. Frozen local verification: **1,205 passed, zero skipped**, including six PostgreSQL tests; **87.53% coverage**; Ruff, formatting, mypy, native dependency checks and diff checks passed.
+- Preserve the complete product history, correction rationale, measured versus missing evidence, operating limits and deployment distinctions. Real-account acceptance, independent usability, customer retention and commercial outcomes remain unvalidated; Cloudflare migration remains paused.
+
 ## Application 2026.09.16.1 — design-partner browser beta
 
 Published as Sites version 8; package remains 1.0.0. GitHub publication/CI state is maintained in the living history and release report.

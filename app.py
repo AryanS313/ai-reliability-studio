@@ -2355,6 +2355,7 @@ def render_run_history() -> None:
 
 def render_settings_export() -> None:
     st.title("Export and workspace settings")
+    st.caption(f"Application release {config.APP_RELEASE} · Evaluation rules {EVALUATOR_VERSION}")
     render_exports()
     st.divider()
     if config.APP_ACCESS_MODE != "public-demo":
