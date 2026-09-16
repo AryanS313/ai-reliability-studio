@@ -4,7 +4,7 @@ This design-partner beta has two runtimes: a browser-hosted Python application a
 
 ## Supported environment
 
-Python **3.11 and 3.12** are supported. Do not run with the obsolete Python 3.9 virtual environment or weaken dependencies to accommodate it. The verified local runtime is 3.12.14. Python 3.11 dependency resolution passed a dry run; local runtime tests on 3.11 are still unverified. The checked-in CI matrix runs both versions; local runtime verification is distinct from completed remote CI.
+Python **3.11 and 3.12** are supported. Do not run with the obsolete Python 3.9 virtual environment or weaken dependencies to accommodate it. The verified local runtime is 3.12.14. Both Python versions passed the merged release's remote CI; local runtime tests were executed on 3.12.14. See the [hosted verification receipts](design-partner/hosted-workflow-review.md) for exact counts and the separately executed PostgreSQL checks.
 
 ```bash
 cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio
@@ -26,7 +26,7 @@ An `.env` file is optional. Use shell variables for mode selection or copy selec
 
 ## Hosted beta mode: native default
 
-These are operator/developer instructions. Visitors use the main site without installing software. The September 17 hosted-workflow correction is in progress; source presence alone does not establish deployment. See the release record for actual acceptance.
+These are operator/developer instructions. Visitors use the main site without installing software. The September 17 hosted-workflow correction is merged and observed on the primary Streamlit origin as application `2026.09.17.1`; merged-main CI passed. See the [release record](design-partner/hosted-workflow-review.md) for the bounded live checks and remaining real-account, manual-picker and independent-user acceptance limits.
 
 ```bash
 APP_ACCESS_MODE=hosted-session APP_ENV=hosted-beta .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1

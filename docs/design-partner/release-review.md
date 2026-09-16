@@ -1,16 +1,16 @@
 # Design-partner beta: release review
 
-**16 September 2026 · Browser beta published and verified; release merged into GitHub main · Original baseline `feature` at `d2fb73e`**
+**Updated 17 September 2026 · Hosted correction merged and observed live · Historical baseline `feature` at `d2fb73e`**
 
 ## Decision and scope
 
-**Acceptance correction — 17 September 2026:** the owner discovered and rejected the main site's sample-only restriction and local installation as the route to custom evaluation. The restriction was an agent implementation decision motivated by safety, not an approved product-scope reduction. The requested complete online journey for nontechnical visitors remains an **open release blocker**. Prior product-completion/design-partner-acceptance claims were overstated. The main site is currently still sample-only; hosted implementation is in progress, not shipped or accepted, and the Cloudflare decision is paused.
+**Acceptance correction and delivery update — 17 September 2026:** the owner rejected the agent’s unapproved sample-only/local-install restriction. The correction [merged through PR 13](https://github.com/AryanS313/ai-reliability-studio/pull/13) at `bcdd6103ca713cb7f58d8736bfa563c308cebd7f`; all five branch/PR/main jobs passed. The primary site shows native `2026.09.17.1` / evaluator v8. Custom preparation, consented public HTTPS transport, two synthetic runs with an inconclusive revision comparison, download controls, missing-key recovery and two-tab reset were observed online. **Classification: bounded hosted design-partner beta as engineering delivery; full owner definition of done unproven.** Approved real-assistant/account, independent usability/domain, actual downloaded-file/native-picker and accessibility acceptance remain missing. The earlier scope/completion mistake remains in the history; Cloudflare is paused.
 
-**The owner has authorized committing, pushing, merging and updating the live application.** Integration combined the locally tested improvements with newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). Native tests, browser build and deployed-origin checks passed within sections 12–13's narrower recorded scope. That code was pushed and [merged into main](https://github.com/AryanS313/ai-reliability-studio/pull/12) at `026a3e7` after branch and PR checks passed. Those facts remain valid; they do not prove completion of the requested hosted custom journey. This correction does not change the published application. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
+**The owner has authorized committing, pushing, merging and updating the live application.** Integration combined the locally tested improvements with newer browser and saved-answer workflows from `origin/main` (integration source `3fc3e59`). Native tests, browser build and deployed-origin checks passed within sections 12–13's narrower recorded scope. That code was pushed and [merged into main](https://github.com/AryanS313/ai-reliability-studio/pull/12) at `026a3e7` after branch and PR checks passed. Those facts remain valid; they do not prove completion of the requested hosted custom journey. Those September 16 receipts are historical; the newer hosted merge and bounded live observations are recorded in section 14. The [living product history](../PRODUCT_EVOLUTION.md) preserves the full evolution and current delivery distinctions.
 
 The earlier **573 passed / zero skipped / 85.71% coverage** result belongs to the pre-integration local candidate. Sections 2–11 preserve that phase's implementation, tests, browser observations and limitations; they are not a substitute for final verification of the combined browser/native release. Sections 12–13 record the integrated scope, completed release checks and remaining external acceptance. Independent design-partner adoption, domain validity and real-account connectivity remain unvalidated.
 
-The obsolete Python 3.9 environment was preserved as `.venv-py39-backup`; the supported native environment is Python 3.12.14. Existing data and unrelated worktrees are preserved. The integration checkout is `/Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio-release`; the original checkout remains available. Verification fixtures, logs and disposable infrastructure stay outside committed application inputs.
+The obsolete Python 3.9 environment was preserved as `.venv-py39-backup`; the supported native environment is Python 3.12.14. Existing data and unrelated worktrees are preserved. The earlier integration checkout was `/Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio-release`; the current working checkout is `/Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio`. Verification fixtures, logs and disposable infrastructure stay outside committed application inputs.
 
 **Baseline distinction:** the originally requested local `feature` branch was older than both main and the deployed browser app. Its historical shared-single-user default is not evidence that the newer live browser exposed visitors to one another. The integrated release preserves main's saved-answer provenance, private browser storage, provider-native instructions, source extraction and runtime boundaries while adding the guided 32-case review and stronger safeguards.
 
@@ -160,17 +160,16 @@ Local evidence logs: `.local-verification/baseline-pytest.txt`, `baseline-golden
 
 ## 7. Remaining items
 
-### Release blockers / required external acceptance evidence
+### Required acceptance evidence and release guardrails
 
-No known failing local critical security/integrity invariant remains in the verified public-sample/trusted-local boundary. The **full customer-facing definition of done is still conditional** on:
+The previous sample-only implementation blocker is resolved within the observed hosted engineering scope. No known failing critical security/integrity invariant remains in the exercised scope; this is not a blanket assurance. The **full owner definition of done remains unproven** because:
 
-0. **Complete hosted custom workflow — implementation blocker:** the primary site must support project creation, approved uploads and case editing, understandable assistant setup, consented evaluation, inspectable findings/export and baseline/revision reuse without local installation or raw JSON setup. It is still sample-only. The owner rejected that restriction on 17 September; the agent must deliver the requested online path with existing safeguards intact, not treat a private-local pilot as completion. Test the full path on the final hosted origin, including separate sessions and failure recovery. No hosted correction is yet claimed deployed or accepted.
-1. **Approved actual assistant and access:** supply a read-only staging endpoint, request/response contract, approved cases and scoped credential entered through the approved runtime secret input. Verify its actual HTTPS/TLS/auth/rate-limit behavior and complete a real run on the intended hosted path. No such account or endpoint was supplied; a local fixture cannot substitute.
-2. **Independent reviewers and first-time users:** recruit qualified engineers/domain owners, adjudicate representative held-out labels, and observe unassisted setup/result teach-back. Demand, evaluator validity, comprehension, recurrence and outcomes cannot be proved by the authoring agent.
-3. **Mobile acceptance:** exercise real narrow viewports and assistive technology using working device/browser controls before claiming responsive/accessibility completion. The available size override did not apply.
-4. **Earlier bounded rollout completed:** the combined build, remote CI and final-origin sample/isolation/reset checks passed; that code is merged and published. This resolved publication of that narrower implementation, not the hosted custom-workflow blocker above. Sustained operation, actual provider CORS/account acceptance and enterprise infrastructure remain unverified.
+1. **Approved actual assistant and access:** a read-only staging endpoint or supported provider account, approved cases and scoped visitor credential are needed to verify actual authentication, answers, rate limits/failure recovery and a meaningful revision. None was supplied. The successful GitHub HTTPS GET and synthetic evaluations cannot substitute.
+2. **Independent reviewers and first-time users:** qualified engineers/domain owners must adjudicate representative held-out labels and complete unassisted setup/result teach-back. Demand, evaluator validity, comprehension, recurrence and outcomes are not proved by the authoring agent.
+3. **Manual import/export and accessibility:** live download controls were clicked; downloaded contents and native file-picker restore were not manually verified. Desktop control was denied and not bypassed. Automated restore/real-parser tests passed separately. Real mobile viewports, assistive technology and full keyboard interaction still require acceptance.
+4. **Operating boundaries:** anonymous temporary sessions, host hibernation, finite local admission/resource controls and the older browser's scoped compiled-dependency exceptions remain explicit. Sustained operation and enterprise controls are separate work. Any new critical integrity/security failure stops rollout.
 
-These remain implementation, verification or external-acceptance gates; approval alone does not resolve them. A controlled local pilot can inform testing but cannot replace the owner's required online product. Complete hosted implementation and final-origin verification before claiming the design-partner release boundary is met.
+The actual primary-origin custom preparation, public HTTPS transport, synthetic baseline/revision comparison, missing-key guard and two-session reset were observed after deployment. Those receipts resolve the earlier initial-entry-only gap; they do not establish real assistant/account or independent customer acceptance. A local pilot cannot replace the owner’s required online experience.
 
 ### Design-partner follow-ups
 
@@ -187,13 +186,13 @@ Managed identity/provisioning/revocation and secure proxy ingress; deployed Post
 
 ## 8. Exact local review commands
 
-The following commands reproduce the original local review using a separate database. For the integrated checkout, change the directory to `ai-reliability-studio-release` and bootstrap its own supported `.venv` before running. A running preview or final deployment is not implied by these commands:
+The primary customer journey is online at [AI Reliability Studio](https://ai-reliability-studio.streamlit.app/); visitors do not need these commands. For developer/operator review, use the current checkout and a supported environment. The earlier `ai-reliability-studio-release` directory was an integration worktree, not the current run location. This preview exercises the same temporary hosted-session mode on loopback port 8503:
 
 ```bash
 cd /Users/aryan/Desktop/Workspace/Projects/ai-reliability-studio
 bash scripts/bootstrap.sh --dev
-APP_ACCESS_MODE=local DATABASE_URL=sqlite:///data/design_partner_review.sqlite3 \
-  .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8501
+APP_ACCESS_MODE=hosted-session APP_ENV=hosted-beta .venv/bin/python -m streamlit run app.py \
+  --server.address 127.0.0.1 --server.port 8503
 ```
 
 For a separate sample-only preview with isolated visitor sessions:
@@ -220,7 +219,7 @@ git diff --check
 The original checkout's ignored verification wrapper starts/stops its own disposable PostgreSQL database. It is a local verification artifact, not a tracked setup dependency:
 
 ```bash
-.venv/bin/python .local-verification/run_postgres_verification.py -q
+.venv/bin/python .local-verification/run_hosted_postgres_verification.py -q
 ```
 
 For portable PostgreSQL verification, follow [deployment instructions](../DEPLOYMENT.md#verification-and-ci), using only a disposable test database and explicit reset flag. A normal pytest without the service URL intentionally skips PostgreSQL tests.
@@ -322,7 +321,7 @@ The presentation refinement passed its focused regression. Final hosted observat
 
 ### Historical candid ratings — 16 September assessment
 
-These were agent engineering/product assessments, not owner acceptance or customer evidence. **The 17 September correction supersedes their overall readiness implication:** the requested main-site product is a technical alpha while its custom journey is unavailable. The separately published browser beta and bounded engineering scores do not close that blocker. Preserve these prior ratings as history rather than treating the earlier onboarding/readiness scores as current acceptance.
+These were agent engineering/product assessments, not owner acceptance or customer evidence. The owner’s 17 September correction invalidated their overall completion implication because the main site then lacked the required custom path. The later hosted correction and bounded live checks supersede that unavailable-path state; the current ratings in section 14 remain conditional on real-assistant and independent-user acceptance. Preserve the earlier ratings as history.
 
 | Dimension | /10 | Practical limit |
 |---|---:|---|
@@ -347,11 +346,11 @@ The corrected CLI smoke subsequently passed in both Python versions on both bran
 
 ### Public-address follow-up
 
-The owner requested a branded domain without the hosting provider’s name, then selected the existing Streamlit address as the interim primary link while away. GitHub’s homepage and the README were updated accordingly. **The URL choice did not approve the sample-only restriction:** on 17 September the owner discovered and rejected it, requiring the full online custom journey. The existing host supports custom domains, but no hostname, DNS account or purchase has been selected; no new service or charge was created. The browser alternative stays available. The Cloudflare decision is paused. See [hosting and address plan](../HOSTING_OPTIONS.md) for prior hosting research; the required hosted workflow and its new final-origin acceptance remain outstanding, and no migration is claimed.
+The owner requested a branded domain without the hosting provider’s name, then selected the existing Streamlit address as the interim primary link while away. GitHub’s homepage and the README were updated accordingly. **The URL choice did not approve the sample-only restriction:** on 17 September the owner discovered and rejected it, requiring the full online custom journey. The existing host supports custom domains, but no hostname, DNS account or purchase has been selected; no new service or charge was created. The browser alternative stays available. The Cloudflare decision is paused. See [hosting and address plan](../HOSTING_OPTIONS.md) for prior hosting research; the hosted correction and bounded primary-origin workflow receipts are recorded below; real-assistant/independent-user acceptance remains open, and no migration is claimed.
 
-## 14. Hosted correction — local implementation, not deployed acceptance
+## 14. Hosted correction — verification and delivery
 
-The working branch `codex/hosted-custom-workflow` contains candidate `2026.09.17.1`. This section records local implementation and focused verification only. The last verified deployed application remains the September 16 snapshot above; the main site's custom-workflow release blocker stays open until the corrected path is verified on its actual origin. Whole-release checks, GitHub integration and deployment of this correction require their own receipts.
+Native release `2026.09.17.1` is included in PR 13 merge `bcdd6103ca713cb7f58d8736bfa563c308cebd7f`; final branch `528f918` includes the plain-language setup follow-up. The primary Streamlit origin displays that release/evaluator v8 and supports the bounded hosted custom journey verified below, without local installation. All branch/PR/main jobs passed. This supersedes current-state sample-only and initial-entry-only descriptions; real-assistant/account and independent-user/manual-picker acceptance remain unproven. Sites version 8/browser application `2026.09.16.1` is unchanged.
 
 The private project download/resume format is JSON capped at 20 MiB, distinct from the hosted 2 MiB per-document upload limit. It carries stored source passages, locations and warnings; prompt/dataset/target versions; historical results/manifests; and coded decisions. It does not contain original uploaded binaries, grant trust to imported evidence or restore qualified calibration. Configured credential fields, secret/environment references, headers and URL credentials/query fragments are removed; new calls need fresh keys and consent. Arbitrary opaque secrets pasted into ordinary content cannot be universally detected, so this remains a private input-bearing file, not a public report.
 
@@ -370,8 +369,37 @@ The usage-mapping regression also exposed a prior persistence bug: generic secre
 
 The combined hosted candidate passed **1,203 tests with zero skips** on Python **3.12.14**, including all **six disposable PostgreSQL 16.2 service checks**: **124.88 seconds**, **33 upstream SDK warnings**, **87.53% branch-enabled source coverage**. Ruff, formatting for **119 files**, mypy for **46 modules**, `pip check` and the native dependency audit passed. Final focused security verification passed **104 tests** with no blocking finding reported in that scope. Log: `.local-verification/hosted-full-suite-final.log`.
 
-The actual local browser acknowledged privacy, created the fictional **Hosted workflow verification** project, loaded five sample documents/30 passages, returned retrieval matches and loaded 32 cases. It had reached prompt/connection preparation; this does not claim a real provider call or a complete custom browser evaluation. The [hosted workflow review](hosted-workflow-review.md) consolidates the correction/change matrix, operating bounds, observed checks and explicitly pending new CI/deployment/final-origin receipts. These local results supersede the local-checks-pending status above, not the still-open hosted acceptance blocker.
+At this earlier local checkpoint, the actual browser acknowledged privacy, created the fictional **Hosted workflow verification** project, loaded five sample documents/30 passages, returned retrieval matches and loaded 32 cases. It had reached prompt/connection preparation; this did not claim a real provider call or a complete custom browser evaluation. The [hosted workflow review](hosted-workflow-review.md) now consolidates later CI/merge and bounded custom-origin receipts, while retaining real-assistant/independent-user/manual-picker acceptance gaps. The historical local results alone did not close that gate.
 
-**Latest local checkpoint:** code was committed at `555aa08` but not yet pushed. A final uploader-cap correction added two regressions and passed 30 hosted/guided tests; the full suite is rerunning against the frozen head in `.local-verification/hosted-release-final.log`. Keep the 1,203-pass checkpoint above distinct until that result is observed. A consented unauthenticated GET through the actual local Connect form to GitHub's public API also passed; it establishes HTTPS transport only, not AI quality or a real provider account.
+**Earlier local checkpoint, superseded by the merge receipt below:** code was committed at `555aa08` but not yet pushed at that time. A final uploader-cap correction added two regressions and passed 30 hosted/guided tests; the full suite was then rerunning against the frozen head in `.local-verification/hosted-release-final.log`. The 1,203-pass checkpoint remains distinct from its later result. A consented unauthenticated GET through the actual local Connect form to GitHub's public API also passed; it establishes HTTPS transport only, not AI quality or a real provider account.
 
 Final uploader-cap rerun: **1,205 passed, zero skipped**, **87.53% coverage**, **125.90 seconds** on the same supported Python and disposable PostgreSQL setup. The main-site-only rule is now a standing requirement in `AGENTS.md`; `CHANGELOG.md` records the correction. See the hosted review for browser observations and the native file-picker testing limitation.
+
+
+### Hosted merge and live-entry receipt — 17 September, 04:59 IST
+
+- [Restore secure custom reviews on the main website](https://github.com/AryanS313/ai-reliability-studio/pull/13) merged at `bcdd6103ca713cb7f58d8736bfa563c308cebd7f`; final branch `528f918` includes the owner-feedback copy correction.
+- All five jobs passed in both the [branch run](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35161918478) and [PR run](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35161921660). Each Python 3.11/3.12 job passed **1,199 tests**, with six PostgreSQL service tests skipped in those jobs and **all six passed** in the dedicated job; **85.58%** non-service coverage and 33 upstream SDK warnings. Linux container health/sample and hosted office-parser imports passed; browser build passed. All five jobs also passed in the [merged-main run](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35162489389).
+- Final local verification after the copy follow-up: **1,205 passed, zero skips, 87.53% coverage, 122.22 seconds**, including six disposable PostgreSQL checks. Log: `.local-verification/hosted-final-copy-suite.log`. The focused copy/UI run passed **48 tests**. Earlier durations/counts above retain their historical scope.
+- Actual primary Settings shows **release `2026.09.17.1` / evaluator v8**. Fictional **Hosted release acceptance** project: privacy acknowledgment; five bundled documents parsed to 30 passages; empty-case validation with Apply disabled; 32 cases saved with coverage warnings; custom prompt saved. The friendly Connect form saved an unauthenticated GitHub public-repository HTTPS GET with explicit consent, then passed Connection check. This is transport-only, not an AI assistant or quality result.
+- The custom baseline and edited-prompt revision each completed **32 unique executions / 29 scored / 3 excluded intentional simulated errors**. Review showed **19 flags**, inspectable source/evaluator reasons and no launch approval. History initially disabled same-run comparison and linked to evaluating a revision; after the second run, comparison was **inconclusive**, with **zero percentage-point change** and an explicit refusal to rank synthetic quality.
+- A second simultaneous tab completed the independent sample (32 cases/19 flags/3 simulated errors/no-launch). Resetting it returned empty Start while the custom project retained its 30 passages, 32 cases and saved prompt. This bounded observation verifies that reset did not affect the other tab; it is not universal isolation or load assurance.
+- Project and readable-report download buttons were clicked. Actual downloaded contents and manual file-picker restore remain unverified; AppTest second-session restore/review/export passed separately.
+- The primary site's **A model with my documents** route showed an empty OpenAI password field/No API key; Evaluate displayed actionable missing-key guidance and kept Run evaluation disabled. No provider call or credential was used.
+- The desktop Computer Use tool denied control of Codex, so native file-picker selection was not manually verified or bypassed. Automated upload/resume and real parser subprocess tests are separate evidence. Real assistant/provider account acceptance, independent comprehension/domain calibration, repeat use and commercial outcomes remain unvalidated.
+
+### Current candid ratings — 17 September hosted engineering release
+
+Subjective assessments on a 10-point scale, not customer ratings. These supersede earlier current-readiness interpretations while preserving the historical ratings above.
+
+| Dimension | Rating | Evidence and remaining limit |
+|---|---:|---|
+| Product value | 7 | A concrete recurring release-review job with useful evidence mechanics; real customer benefit and willingness to use/pay remain unvalidated |
+| Positioning | 8 | Narrow support-assistant release problem, explicit non-goals and evidence boundaries; customer-language testing remains absent |
+| Onboarding | 6 | Main-site custom flow and sample work with clearer connection choices; owner confusion prompted fixes, and unassisted integration is unmeasured |
+| Usability | 6 | Readable findings, missing-key recovery and revision path observed; independent comprehension, manual picker and full mobile/accessibility acceptance remain open |
+| Evaluation integrity | 8 | Failures excluded, source reasons inspectable, synthetic/imported evidence constrained and comparison refuses unsupported improvement; real-domain calibration still missing |
+| Reliability | 7 | Local 1,205-test suite, all remote jobs and bounded live journey pass; provider-account behavior, sustained host operation and load are unvalidated |
+| Security and privacy | 7 | Isolated temporary sessions, explicit keys/consent and bounded parsing/restore; live reset isolation observed. No independent audit, OS parser sandbox or distributed-abuse assurance; older browser exceptions remain |
+| Design-partner readiness | 6 | Bounded online engineering beta delivered; an approved real assistant, independent reviewer/user and remaining manual acceptance are needed to satisfy the full owner definition of done |
+| Portfolio strength | 7 | Evidence-backed scope correction, ownership history, implementation and verification are substantial; no customer discovery, adoption, repeated use or commercial outcome can yet be claimed |

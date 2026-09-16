@@ -6,11 +6,11 @@ A release-review product for small teams shipping assistants grounded in policie
 
 [Open AI Reliability Studio](https://ai-reliability-studio.streamlit.app/) · [Product brief](docs/design-partner/product-brief.md) · [Product evolution and current state](docs/PRODUCT_EVOLUTION.md) · [Operator documentation](docs/DEPLOYMENT.md)
 
-> **Hosted workflow correction in progress:** the previous primary deployment allowed only the sample. That restriction was an unapproved scope reduction. This branch restores custom work to the main-site journey; deployment and acceptance are tracked separately in the [release review](docs/design-partner/release-review.md). Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
+> **Hosted custom workflows are live:** application `2026.09.17.1` restores custom work on the primary site after an unapproved sample-only restriction. The correction is merged and its main-branch checks passed. The [hosted workflow review](docs/design-partner/hosted-workflow-review.md) records actual live observations and remaining real-account, usability and manual-testing limits. Synthetic demonstrations never establish model quality or launch readiness. A report supports a human release decision; it is not a production-safety certification.
 
 ## Use the main site
 
-[Open AI Reliability Studio](https://ai-reliability-studio.streamlit.app/). The intended main-site journey is **try the sample**, **start your own review**, or **resume a downloaded project**, using forms, uploads and browser downloads. Visitors should not need a terminal, software installation, or a separate local workspace. The hosted correction must pass deployed acceptance before this requirement is marked complete.
+[Open AI Reliability Studio](https://ai-reliability-studio.streamlit.app/). **Try the sample**, **start your own review**, or **resume a downloaded project**, using forms, uploads and browser downloads. Customer workflows run on this site; no terminal, software installation or separate local workspace is required. Connection details may still require help from the engineer who operates your assistant.
 
 The hosted beta uses a separate temporary workspace per visitor. Download your project before leaving and upload it to resume on the site; credentials must be entered again. This is not automatic cloud saving or an authenticated team account. Community Cloud may still hibernate after inactivity. A branded address and alternative hosting remain undecided; Cloudflare account creation is paused at the owner's request.
 
@@ -47,13 +47,14 @@ Ask the assistant's engineer for a **read-only staging endpoint**. For an endpoi
 
 | Field | Example |
 |---|---|
+| Name for this test | `Support assistant — revised refund instructions` (your label for this version) |
 | Your assistant’s web address | `https://staging.example.com/answer` |
 | Question field in your request | `question` |
 | Answer field in the response | `$.answer` |
-| Authentication | Bearer token, custom secret header, or no authentication, as agreed with its owner |
+| Authentication | Choose **Access token (Bearer)**, **API key in a named header**, or **No key needed**, as agreed with its owner |
 | Access token or API key | Enter the credential in the password field; it is not saved with the target |
 
-Saving the connection makes no request. A configured health path supports **Check connection**; without one, **Send one test request** sends the displayed connectivity question only after consent. A successful check confirms connectivity/response shape, not answer quality.
+Saving the connection makes no request. A configured health path supports **Check connection**; without one, **Send one test request** sends a fixed connectivity question only after consent. A health check confirms reachability; a test request also checks the configured answer format. Neither evaluates answer quality.
 
 Optional response mappings can expose citations, escalation, and the reported model. Citations need resolvable source or chunk provenance; naming a document is not proof that it supports an answer. Without your assistant's retrieval trace, Studio's reference-document retrieval is **not** a measurement of the assistant's internal retriever. An endpoint returning text only can still be inspected, but missing citation, retrieval, cost, or identity evidence stays missing.
 
@@ -84,7 +85,7 @@ Use the question editor or downloadable template in **Prepare → Cases**. The e
 
 Additional fields support multiple acceptable answers/sources, prohibited answers, exact passages, rubrics, coverage rationale and held-out splits. See [versioned examples](examples/evaluation_dataset_v1.jsonl). Preserve stable case IDs across releases, include policy exceptions and previous incidents, and keep independent held-out cases for calibration. Sample cases are fictional and do not represent your users.
 
-## Verification and CLI
+## Developer verification and optional CLI
 
 ```bash
 .venv/bin/ruff check .

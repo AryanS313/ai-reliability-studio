@@ -4,7 +4,7 @@ This technical changelog complements the [living product history and PM handoff]
 
 ## Application 2026.09.17.1 — hosted custom workflow correction
 
-Locally committed and verified; GitHub checks, merge and primary-site deployment receipts are tracked in the [hosted workflow review](docs/design-partner/hosted-workflow-review.md). Package remains 1.0.0, evaluator `deterministic-v8`, report schema 2.1. Do not infer deployment from this entry.
+Merged through [Restore secure custom reviews on the main website](https://github.com/AryanS313/ai-reliability-studio/pull/13); all five [merged-main checks](https://github.com/AryanS313/ai-reliability-studio/actions/runs/35162489389) passed. The primary Streamlit site reports this release and its custom project, preparation, consented HTTPS connection, synthetic review, downloads and independent-session behavior were exercised there. Exact receipts and remaining acceptance limits are in the [hosted workflow review](docs/design-partner/hosted-workflow-review.md). Package remains 1.0.0, evaluator `deterministic-v8`, report schema 2.1. The optional browser deployment remains on application `2026.09.16.1`.
 
 - Correct the unapproved sample-only restriction: make isolated, temporary custom workspaces the native default. Keep project preparation, uploads, prompt editing, assistant/provider setup, consented execution, review, comparisons and exports on the main website.
 - Explain Connect and Evaluate choices as **My existing assistant** or **A model with my documents**; clarify the test name, assistant address and temporary access key after the owner identified confusing terminology.

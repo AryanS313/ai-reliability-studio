@@ -9,9 +9,11 @@ The primary UI sequence is **Start → Prepare → Connect → Evaluate → Revi
 ```mermaid
 flowchart LR
     UI["Six-step Streamlit workflow"] --> MODE["Access mode and current identity"]
-    MODE --> DEMO["Public: isolated in-memory sample"]
+    MODE --> HOSTED["Default hosted: isolated temporary custom workspace"]
+    MODE --> DEMO["Optional public-demo: isolated sample"]
     MODE --> PRIVATE["Local or authenticated workspace"]
     DEMO --> SYN["Synthetic adapter only"]
+    HOSTED --> INPUT["Validated versioned inputs"]
     PRIVATE --> INPUT["Validated versioned inputs"]
     INPUT --> ENGINE["Bounded execution engine"]
     ENGINE --> SYN
