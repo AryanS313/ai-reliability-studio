@@ -161,7 +161,7 @@ def test_privacy_ack_survives_navigation_and_project_creation(tmp_path, monkeypa
     app.radio(key="navigation").set_value("Connect").run(timeout=30)
     assert not app.exception
     assert app.session_state["privacy_acknowledged"] is True
-    assert any(item.label == "Assistant endpoint" for item in app.text_input)
+    assert any(item.label == "Your assistant’s web address" for item in app.text_input)
 
 
 def test_analytics_does_not_repeat_sample_events_on_result_rerun(tmp_path, monkeypatch):

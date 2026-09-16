@@ -47,11 +47,11 @@ Ask the assistant's engineer for a **read-only staging endpoint**. For an endpoi
 
 | Field | Example |
 |---|---|
-| Assistant endpoint | `https://staging.example.com/answer` |
+| Your assistant’s web address | `https://staging.example.com/answer` |
 | Question field in your request | `question` |
 | Answer field in the response | `$.answer` |
 | Authentication | Bearer token, custom secret header, or no authentication, as agreed with its owner |
-| Session-only token or key | Enter the credential in the password field; it is not saved with the target |
+| Access token or API key | Enter the credential in the password field; it is not saved with the target |
 
 Saving the connection makes no request. A configured health path supports **Check connection**; without one, **Send one test request** sends the displayed connectivity question only after consent. A successful check confirms connectivity/response shape, not answer quality.
 
@@ -59,7 +59,7 @@ Optional response mappings can expose citations, escalation, and the reported mo
 
 For nested request formats or tool-call/usage mappings, your engineer can prepare the [external target example](examples/external_target.json). Import it under **Connection settings from your engineer**, review the form, then save the connection. Imported settings remain a draft until saved; credentials still belong in the session-only password field. Endpoints are subject to destination/header/size safeguards. Action-taking agents are outside this beta's supported scope.
 
-Alternatively, choose **Direct foundation model** in Connect. Enter your provider key in the password field to call the selected provider with Studio's retrieved context. Hosted visitors never inherit the site's owner credentials. This tests that model/prompt setup, not an existing application's own retrieval. Direct-provider adapters use official provider endpoints and ignore ambient base-URL/proxy routing. Never paste credentials into a prompt, dataset, or saved configuration.
+Alternatively, choose **A model with my documents** in Connect. Enter your provider key in the password field to call the selected provider with Studio's retrieved context. Hosted visitors never inherit the site's owner credentials. This tests that model/prompt setup, not an existing application's own retrieval. Direct-provider adapters use official provider endpoints and ignore ambient base-URL/proxy routing. Never paste credentials into a prompt, dataset, or saved configuration.
 
 ## What makes the evidence reviewable
 

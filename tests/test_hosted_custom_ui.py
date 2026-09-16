@@ -140,7 +140,20 @@ def test_hosted_visit_provider_keys_and_second_session_are_separate(hosted_ui):
     assert "Authenticated workspace" not in visible
     create_project(first)
     page(first, "Connect")
+    assert widget(first.radio, "What are you testing?").options == [
+        "My existing assistant",
+        "A model with my documents",
+    ]
+    assert "any label" in widget(first.text_input, "Name for this test").proto.help
+    assert (
+        "accepts a question and returns an answer"
+        in widget(first.text_input, "Your assistant’s web address").proto.help
+    )
+    assert any("like a password" in item.value and "open session" in item.value for item in first.caption)
     widget(first.radio, "What are you testing?").set_value("Direct foundation model").run(timeout=30)
+    assert first.session_state["target_kind"] == "Direct foundation model"
+    assert any("uploaded documents" in item.value and "own search or tools" in item.value for item in first.info)
+    assert "private access code" in widget(first.text_input, "OpenAI API key").proto.help
     assert widget(first.text_input, "OpenAI API key").value == ""
     assert any("Add your provider key before running" in item.value for item in first.info)
     widget(first.text_input, "OpenAI API key").set_value("fictional-session-key").run(timeout=30)
@@ -222,8 +235,8 @@ def test_hosted_custom_https_review_compare_and_export_stay_online(hosted_ui, mo
     prepare_inputs(app, monkeypatch)
     page(app, "Connect")
     assert widget(app.radio, "What are you testing?").value == "External assistant/API"
-    widget(app.text_input, "Assistant endpoint").set_value("https://assistant.example.test/answer")
-    widget(app.text_input, "Session-only token or key").set_value("fictional-target-credential")
+    widget(app.text_input, "Your assistant’s web address").set_value("https://assistant.example.test/answer")
+    widget(app.text_input, "Access token or API key").set_value("fictional-target-credential")
     widget(app.text_input, "Read-only health path (optional)").set_value("/health")
     widget(app.button, "Save connection").click().run(timeout=30)
     assert not app.exception and not app.error
@@ -254,6 +267,8 @@ def test_hosted_custom_https_review_compare_and_export_stay_online(hosted_ui, mo
     assert any("connectivity only" in item.value for item in app.success)
     page(app, "Evaluate")
     assert widget(app.radio, "Evaluation target").value == "External assistant/API"
+    assert "My existing assistant" in widget(app.radio, "Evaluation target").options
+    assert "A model with my documents" in widget(app.radio, "Evaluation target").options
     assert widget(app.button, "Run Evaluation").disabled
     assert widget(app.slider, "Questions running at once").max == 2
     assert widget(app.slider, "Retries after temporary errors").max == 1

@@ -191,8 +191,8 @@ def test_connection_save_validates_json_preserves_mapping_and_never_persists_cre
     _find(app.button, "Create project").click().run(timeout=30)
     _page(app, "Connect")
     credential = "opaque-partner-fixture-credential"
-    _find(app.text_input, "Assistant endpoint").set_value("https://staging.example.test/answer")
-    _find(app.text_input, "Session-only token or key").set_value(credential)
+    _find(app.text_input, "Your assistant’s web address").set_value("https://staging.example.test/answer")
+    _find(app.text_input, "Access token or API key").set_value(credential)
     from src.connection_settings import parse_connection_settings
 
     with pytest.raises(ValueError, match="could not be validated"):
@@ -209,7 +209,7 @@ def test_connection_save_validates_json_preserves_mapping_and_never_persists_cre
         ).encode()
     )
     app.run(timeout=30)
-    _find(app.text_input, "Session-only token or key").set_value(credential)
+    _find(app.text_input, "Access token or API key").set_value(credential)
     _find(app.text_input, "Answer field in the response").set_value("$.data.text")
     _find(app.text_input, "Citations field (optional)").set_value("")
     _find(app.number_input, "Retries after transient errors").set_value(0)

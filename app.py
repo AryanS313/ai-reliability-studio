@@ -83,6 +83,10 @@ from src.versioning import version_hash
 st.set_page_config(page_title="AI Reliability Studio", page_icon="ARS", layout="wide")
 
 PROVIDER_LABELS = {"OpenAI": "openai", "Google Gemini": "gemini", "Anthropic Claude": "anthropic"}
+TARGET_LABELS = {
+    "External assistant/API": "My existing assistant",
+    "Direct foundation model": "A model with my documents",
+}
 PROVIDER_SECRET_NAMES = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
@@ -611,6 +615,7 @@ def render_provider_settings() -> None:
     st.subheader("Model provider")
     if not custom_access(require_project=True):
         return
+    st.write("Choose the company that will generate answers using your documents and instructions.")
     provider_label = st.selectbox(
         "Provider",
         list(PROVIDER_LABELS),
@@ -625,12 +630,19 @@ def render_provider_settings() -> None:
         type="password",
         key=key_name,
         value=st.session_state.provider_api_keys.get(provider, ""),
-        help="Session memory only. It is excluded from saved projects, events and reports.",
+        help=(
+            "An API key is a private access code from your model-provider account. "
+            "Keep it private like a password. The provider may charge your account for generated answers."
+        ),
     )
     keys = dict(st.session_state.provider_api_keys)
     keys[provider] = key_value.strip()
     st.session_state.provider_api_keys = keys
-    st.caption(f"Key source: {api_key_source()}. Keys are never displayed or saved with evidence.")
+    st.caption(
+        "The key you enter stays only in this open session. It is excluded from project downloads, events and reports. "
+        "Enter it again in a new session."
+    )
+    st.caption(f"Key source: {api_key_source()}.")
     if effective_api_key():
         st.success("A key is configured. Its validity will be checked by the first provider request.")
     else:
@@ -1342,23 +1354,30 @@ def render_target_setup() -> None:
         "What are you testing?",
         ["External assistant/API", "Direct foundation model"],
         index=0 if st.session_state.target_kind != "Direct foundation model" else 1,
+        format_func=lambda value: TARGET_LABELS.get(value, value),
         key="connection_choice",
     )
     st.session_state.target_kind = kind
     if kind == "Direct foundation model":
         st.info(
-            "This calls a foundation model with Studio's retrieved context. To test your application's own retrieval and behavior, choose an external assistant."
+            "Choose a model provider and use your uploaded documents to generate answers here. "
+            "This checks the model with Studio's document search; it does not test an existing assistant's own search or tools."
         )
         render_provider_settings()
         st.button("Continue to evaluation", on_click=navigate, args=("Evaluate",))
         return
     st.write(
-        "Use a staging, read-only question-answer endpoint. Ask its owner for the URL, request field and response fields below."
+        "Send your test questions to an assistant your team already runs, then review its answers. "
+        "Use a test version that only answers questions and cannot change records or take actions."
+    )
+    st.caption(
+        "Ask your assistant's developer for its question-and-answer web address and access details. "
+        "They can also confirm the question and answer field names below."
     )
     if config.hosted_sessions_enabled():
         st.caption(
             "Use a public HTTPS address. Private network addresses and redirects are blocked. "
-            "Your token stays in this temporary session and is excluded from saved connection settings."
+            "Your access key stays in this temporary session and is excluded from saved connection settings."
         )
     st.caption(
         "No calls happen until you explicitly run a connection check or evaluation. Action-taking agents are outside this beta's scope."
@@ -1381,7 +1400,7 @@ def render_target_setup() -> None:
                 st.session_state.imported_connection_draft = settings
                 st.session_state.external_target_secret = ""
                 st.success(
-                    "Settings loaded. Check the assistant name and endpoint, enter any credential, then save the connection."
+                    "Settings loaded. Check the test name and web address, enter the access key if needed, then save the connection."
                 )
             except ValueError as exc:
                 st.error(safe_display_text(exc))
@@ -1396,9 +1415,20 @@ def render_target_setup() -> None:
         else ("Bearer token" if not stored_headers or "Authorization" in stored_headers else "Custom secret header")
     )
     with st.form("external_connection"):
-        name = st.text_input("Assistant / release name", values.get("name", "Support assistant"), max_chars=120)
+        name = st.text_input(
+            "Name for this test",
+            values.get("name", "Support assistant"),
+            max_chars=120,
+            help="Choose any label you will recognize later, such as Support assistant — September test.",
+        )
         endpoint = st.text_input(
-            "Assistant endpoint", values.get("endpoint", ""), placeholder="https://staging.example.com/answer"
+            "Your assistant’s web address",
+            values.get("endpoint", ""),
+            placeholder="https://staging.example.com/answer",
+            help=(
+                "Ask its developer for the HTTPS address that accepts a question and returns an answer. "
+                "They may call this the API endpoint. A normal chat-page address usually will not work."
+            ),
         )
         c1, c2 = st.columns(2)
         question_field = c1.text_input(
@@ -1415,16 +1445,31 @@ def render_target_setup() -> None:
             "Authentication",
             ["Bearer token", "No authentication", "Custom secret header"],
             index=["Bearer token", "No authentication", "Custom secret header"].index(saved_auth),
+            format_func=lambda value: {
+                "Bearer token": "Access token (Bearer)",
+                "No authentication": "No key needed",
+                "Custom secret header": "API key in a named header",
+            }[value],
+            help=(
+                "This controls how your assistant checks who may use it. Use the option its developer specifies. "
+                "Choose No key needed only if they confirm that the test assistant accepts requests without a key."
+            ),
         )
         header_name = st.text_input(
             "Secret header name (custom authentication only)",
             next(iter(stored_headers)) if saved_auth == "Custom secret header" else "X-API-Key",
+            help="Only needed for API key in a named header. Your developer supplies this name; X-API-Key is one example.",
         )
         secret = st.text_input(
-            "Session-only token or key",
+            "Access token or API key",
             type="password",
             value=st.session_state.external_target_secret,
-            help="Paste the token without Bearer. This value is never saved to the target configuration.",
+            help="Paste the private access code your developer supplies. For a Bearer token, paste only the token, without the word Bearer.",
+        )
+        st.caption(
+            "Treat this access code like a password. It is hidden while you type and kept only in this open session, "
+            "so enter it again next time. It is excluded from saved connections and project downloads. "
+            "Leave it empty when No key needed is selected."
         )
         with st.expander("Optional response fields and advanced request"):
             citation_path = st.text_input(
@@ -1605,7 +1650,13 @@ def render_run_evaluation(*, live_only: bool = False) -> None:
         st.session_state.target_kind = target_options[0]
     if st.session_state.get("_evaluation_target") not in target_options:
         st.session_state._evaluation_target = st.session_state.target_kind
-    target_kind = st.radio("Evaluation target", target_options, key="_evaluation_target", horizontal=True)
+    target_kind = st.radio(
+        "Evaluation target",
+        target_options,
+        format_func=lambda value: TARGET_LABELS.get(value, value),
+        key="_evaluation_target",
+        horizontal=True,
+    )
     st.session_state.target_kind = target_kind
     if target_kind != "Synthetic demonstration" and not custom_access():
         return

@@ -1,6 +1,6 @@
 # Hosted custom workflow correction
 
-**Evidence date: 17 September 2026. Candidate: `2026.09.17.1`, branch `codex/hosted-custom-workflow`, locally committed at `555aa08` and not yet pushed at this snapshot. Status: locally implemented with verification below; new remote CI, merge, deployment and final-origin acceptance are pending.** The primary Streamlit site's last recorded behavior is still sample-only. This document does not claim the correction is live.
+**Evidence date: 17 September 2026. Candidate: `2026.09.17.1`, branch `codex/hosted-custom-workflow`, application commit `555aa08` and documentation commit `f26c6b6` are pushed. [Restore secure custom reviews on the main website](https://github.com/AryanS313/ai-reliability-studio/pull/13) is open. Remote CI, final merge, deployment and final-origin acceptance are pending.** The primary Streamlit site's last recorded behavior is still sample-only. This document does not claim the correction is live.
 
 See the [product history](../PRODUCT_EVOLUTION.md) for the decision record, [release review](release-review.md#14-hosted-correction--local-implementation-not-deployed-acceptance) for the preceding receipts, and [product brief](product-brief.md) for the intended user and job. All earlier measured baselines retain their dates and scope.
 
@@ -61,3 +61,7 @@ The project checks caught and fixed two restore crashes: schema-invalid case row
 | Adoption and commercial outcomes | **Unmeasured** | Qualified teams, actual next-release reuse, confirmed decisions/findings, measured investigation effort and concrete continuation/payment evidence |
 
 **Maturity at this snapshot:** technical alpha for the requested main-site journey, with substantially stronger local engineering evidence and a separately published bounded browser beta. The immediate milestone is verified deployment of the complete hosted custom path. The next product milestone is a qualified two-release pilot; a working hosted workflow would still not establish demand, retention or willingness to pay.
+
+## Owner feedback during release verification
+
+The owner did not understand the two connection choices or the release-name, endpoint and session-key terms. Connect and Evaluate now use **My existing assistant** and **A model with my documents**, explain what each tests, and label the name/address/access fields in plain language. Internal target identities and no-call-on-save/consent semantics remain unchanged. This is observed owner feedback and an implementation correction; independent user comprehension remains unmeasured.

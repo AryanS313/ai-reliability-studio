@@ -4,6 +4,9 @@
 
 ## Changes since the previous update
 
+- **Owner-observed setup confusion:** the owner could not distinguish existing-assistant evaluation from direct-model evaluation and did not understand release name, endpoint or session-key terminology. This is direct owner usability evidence, not external customer validation. A focused copy correction uses plain choices consistently in Connect/Evaluate and explains the required developer-supplied details.
+- **GitHub branch published:** the hosted correction and its documentation are pushed; [Restore secure custom reviews on the main website](https://github.com/AryanS313/ai-reliability-studio/pull/13) is open. Checks, final merge and primary-origin acceptance remain separate gates.
+
 - **Frozen local verification:** the hosted correction passed 1,205 tests including six PostgreSQL checks, zero skipped, 87.53% coverage. The changelog and standing main-site-only rule are updated. Actual browser project creation, sources, retrieval, prompt saving, consented public HTTPS transport, synthetic review and separate-session privacy were observed; native file-picker automation was denied and is explicitly unverified. Remote integration and deployed acceptance remain pending.
 
 - **Owner correction:** the owner discovered and rejected the main site's sample-only restriction. Choosing Streamlit as the temporary primary address did **not** approve removing custom evaluation from that address or requiring visitors to install the app locally. The required experience is the complete guided journey online on the main site, usable by nontechnical visitors.

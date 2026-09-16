@@ -7,6 +7,7 @@ This technical changelog complements the [living product history and PM handoff]
 Locally committed and verified; GitHub checks, merge and primary-site deployment receipts are tracked in the [hosted workflow review](docs/design-partner/hosted-workflow-review.md). Package remains 1.0.0, evaluator `deterministic-v8`, report schema 2.1. Do not infer deployment from this entry.
 
 - Correct the unapproved sample-only restriction: make isolated, temporary custom workspaces the native default. Keep project preparation, uploads, prompt editing, assistant/provider setup, consented execution, review, comparisons and exports on the main website.
+- Explain Connect and Evaluate choices as **My existing assistant** or **A model with my documents**; clarify the test name, assistant address and temporary access key after the owner identified confusing terminology.
 - Record the owner's non-negotiable main-site requirement in `AGENTS.md`; customer onboarding must never require a terminal, installation or local workspace.
 - Preserve per-visitor memory databases, fresh session credentials, privacy acknowledgment and explicit external-call consent; prevent use of deployment-owner keys and shared persistent storage.
 - Bound session/database/run/call capacity and retries. Permit public HTTPS assistant endpoints through validated DNS, pinned TLS and redirect/proxy restrictions; keep private destinations blocked.
